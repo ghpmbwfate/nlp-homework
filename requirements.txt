@@ -1,0 +1,20 @@
+# PDF解析
+magic-pdf[full]
+pdf2image
+Pillow
+
+# 向量数据库与检索
+chromadb
+sentence-transformers
+rank_bm25
+jieba
+
+# VLM生成
+transformers
+qwen-vl-utils
+torch
+accelerate
+bitsandbytes
+
+# 评估（可选，用于运行 evaluate.py）
+# rouge  # 如需要更标准的 ROUGE 实现可安装

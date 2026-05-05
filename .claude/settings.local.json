@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(ruff check:*)",
+      "Bash(mypy:*)",
+      "Bash(pylint retriever.py generator.py main.py --disable=R,C)",
+      "Bash(gh auth:*)",
+      "Bash(git config:*)",
+      "Bash(cd:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
