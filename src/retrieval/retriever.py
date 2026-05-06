@@ -2,7 +2,6 @@
 检索模块：稠密+BM25多路召回 → cross-encoder重排序 → 返回top-k结果
 """
 
-import os
 import json
 import pickle
 from pathlib import Path
@@ -13,10 +12,13 @@ from chromadb.utils import embedding_functions
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
+from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, IMAGES_DIR
 
-def load_dense_index(chroma_dir: str = "index_data/chroma",
+
+def load_dense_index(chroma_dir: str = None,
                      model_name: str = "BAAI/bge-m3"):
     """加载ChromaDB稠密索引"""
+    chroma_dir = chroma_dir or str(INDEX_CHROMA_DIR)
     embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name=model_name
     )
@@ -28,9 +30,9 @@ def load_dense_index(chroma_dir: str = "index_data/chroma",
     return collection
 
 
-def load_bm25_index(bm25_dir: str = "index_data/bm25"):
+def load_bm25_index(bm25_dir: str = None):
     """加载BM25索引和chunk元数据"""
-    bm25_path = Path(bm25_dir)
+    bm25_path = Path(bm25_dir) if bm25_dir else INDEX_BM25_DIR
 
     with open(bm25_path / "bm25.pkl", "rb") as f:
         bm25 = pickle.load(f)
@@ -131,8 +133,9 @@ def merge_and_deduplicate(dense_hits: list[dict],
 
 
 def get_page_image_path(filename: str, page: int,
-                        image_dir: str = "page_images") -> str | None:
+                        image_dir: str = None) -> str | None:
     """获取页面对应的图片路径（返回 file:/// URI）"""
+    image_dir = image_dir or str(IMAGES_DIR)
     image_name = f"{filename}_page_{page}.png"
     image_path = Path(image_dir) / image_name
     if image_path.exists():
@@ -144,16 +147,16 @@ class Retriever:
     """检索器：封装完整的检索流程"""
 
     def __init__(self,
-                 chroma_dir: str = "index_data/chroma",
-                 bm25_dir: str = "index_data/bm25",
-                 image_dir: str = "page_images",
+                 chroma_dir: str = None,
+                 bm25_dir: str = None,
+                 image_dir: str = None,
                  dense_model: str = "BAAI/bge-m3",
                  reranker_model: str = "BAAI/bge-reranker-large",
                  dense_top_k: int = 10,
                  bm25_top_k: int = 10,
                  final_top_k: int = 3):
         print("[INFO] 初始化检索器...")
-        self.image_dir = image_dir
+        self.image_dir = image_dir or str(IMAGES_DIR)
         self.dense_top_k = dense_top_k
         self.bm25_top_k = bm25_top_k
         self.final_top_k = final_top_k
@@ -246,9 +249,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="检索测试工具")
     parser.add_argument("--query", type=str, required=True, help="测试查询")
-    parser.add_argument("--chroma_dir", type=str, default="index_data/chroma")
-    parser.add_argument("--bm25_dir", type=str, default="index_data/bm25")
-    parser.add_argument("--image_dir", type=str, default="page_images")
+    parser.add_argument("--chroma_dir", type=str, default=None)
+    parser.add_argument("--bm25_dir", type=str, default=None)
+    parser.add_argument("--image_dir", type=str, default=None)
     parser.add_argument("--top_k", type=int, default=3)
 
     args = parser.parse_args()

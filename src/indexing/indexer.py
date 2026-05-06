@@ -4,7 +4,6 @@
 - 稠密索引（ChromaDB + bge-m3）+ 稀疏索引（BM25 + jieba）
 """
 
-import os
 import json
 import pickle
 from pathlib import Path
@@ -13,6 +12,8 @@ import jieba
 import chromadb
 from chromadb.utils import embedding_functions
 from rank_bm25 import BM25Okapi
+
+from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR
 
 
 def load_page_content(page_content_path: str = "page_content.json") -> list[dict]:
@@ -72,9 +73,9 @@ def create_chunks(pages: list[dict]) -> list[dict]:
 
 def build_dense_index(chunks: list[dict],
                       model_name: str = "BAAI/bge-m3",
-                      persist_dir: str = "index_data/chroma"):
+                      persist_dir: str = None):
     """构建稠密向量索引（ChromaDB）"""
-    persist_path = Path(persist_dir)
+    persist_path = Path(persist_dir) if persist_dir else INDEX_CHROMA_DIR
     persist_path.mkdir(parents=True, exist_ok=True)
 
     # 使用sentence-transformers的embedding
@@ -112,7 +113,7 @@ def build_dense_index(chunks: list[dict],
             metadatas=metadatas
         )
 
-    print(f"[INFO] 稠密索引构建完成: {len(chunks)} 个chunk, 存储于 {persist_dir}")
+    print(f"[INFO] 稠密索引构建完成: {len(chunks)} 个chunk, 存储于 {persist_path}")
     return collection
 
 
@@ -122,9 +123,9 @@ def tokenize_chinese(text: str) -> list[str]:
 
 
 def build_bm25_index(chunks: list[dict],
-                     save_dir: str = "index_data/bm25"):
+                     save_dir: str = None):
     """构建BM25稀疏索引"""
-    save_path = Path(save_dir)
+    save_path = Path(save_dir) if save_dir else INDEX_BM25_DIR
     save_path.mkdir(parents=True, exist_ok=True)
 
     print("[INFO] 构建BM25索引...")
@@ -151,14 +152,14 @@ def build_bm25_index(chunks: list[dict],
     with open(save_path / "chunks.json", "w", encoding="utf-8") as f:
         json.dump(chunk_meta, f, ensure_ascii=False, indent=2)
 
-    print(f"[INFO] BM25索引构建完成: {len(chunks)} 个chunk, 存储于 {save_dir}")
+    print(f"[INFO] BM25索引构建完成: {len(chunks)} 个chunk, 存储于 {save_path}")
     return bm25, chunk_meta
 
 
 def build_all_indexes(page_content_path: str = "page_content.json",
                       dense_model: str = "BAAI/bge-m3",
-                      chroma_dir: str = "index_data/chroma",
-                      bm25_dir: str = "index_data/bm25"):
+                      chroma_dir: str = None,
+                      bm25_dir: str = None):
     """构建所有索引"""
     print("=" * 50)
     print("Step 1: 加载页面内容")
@@ -194,8 +195,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="索引构建工具")
     parser.add_argument("--page_content", type=str, default="page_content.json")
     parser.add_argument("--dense_model", type=str, default="BAAI/bge-m3")
-    parser.add_argument("--chroma_dir", type=str, default="index_data/chroma")
-    parser.add_argument("--bm25_dir", type=str, default="index_data/bm25")
+    parser.add_argument("--chroma_dir", type=str, default=None)
+    parser.add_argument("--bm25_dir", type=str, default=None)
 
     args = parser.parse_args()
     build_all_indexes(

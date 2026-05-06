@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 输出目录
+outputs/
+
+# 数据目录中的解析结果（保留原始PDF）
+data/reports/*.md
+data/reports/*/
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Claude settings
+.claude/settings.local.json

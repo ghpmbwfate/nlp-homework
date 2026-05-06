@@ -5,15 +5,19 @@ PDF解析模块：MinerU提取文本/表格 + 每页转图片
 
 import os
 import json
+import re
 import subprocess
 from pathlib import Path
+
 from pdf2image import convert_from_path
 
+from src.config import PARSED_DIR, IMAGES_DIR
 
-def parse_pdfs_with_mineru(pdf_dir: str, output_dir: str = "parsed_data"):
+
+def parse_pdfs_with_mineru(pdf_dir: str, output_dir: str = None):
     """使用MinerU解析所有PDF，输出markdown"""
     pdf_dir = Path(pdf_dir)
-    output_dir = Path(output_dir)
+    output_dir = Path(output_dir) if output_dir else PARSED_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
     pdf_files = sorted(pdf_dir.glob("*.pdf"))
@@ -77,10 +81,10 @@ def parse_pdfs_with_mineru(pdf_dir: str, output_dir: str = "parsed_data"):
     return results
 
 
-def convert_pdfs_to_images(pdf_dir: str, output_dir: str = "page_images", dpi: int = 200):
+def convert_pdfs_to_images(pdf_dir: str, output_dir: str = None, dpi: int = 200):
     """将每个PDF的每一页转为PNG图片"""
     pdf_dir = Path(pdf_dir)
-    output_dir = Path(output_dir)
+    output_dir = Path(output_dir) if output_dir else IMAGES_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
     pdf_files = sorted(pdf_dir.glob("*.pdf"))
@@ -124,7 +128,6 @@ def split_markdown_by_page(markdown_content: str, pdf_name: str) -> list[dict]:
     返回: [{"page": int, "text": str, "tables": [str]}]
     """
     # MinerU的页面分隔标记
-    import re
     page_split_pattern = r'(?:<!--\s*Page\s+(\d+)\s*-->|\n---\n|\f)'
 
     parts = re.split(page_split_pattern, markdown_content)
@@ -179,20 +182,20 @@ def split_markdown_by_page(markdown_content: str, pdf_name: str) -> list[dict]:
 
 def extract_tables(text: str) -> list[str]:
     """从markdown文本中提取表格"""
-    import re
     # 匹配markdown表格
     table_pattern = r'(\|[^\n]+\|\n(?:\|[-:| ]+\|\n)?(?:\|[^\n]+\|\n)*)'
     tables = re.findall(table_pattern, text)
     return [t.strip() for t in tables if t.strip()]
 
 
-def build_page_content_index(parsed_data_dir: str = "parsed_data",
-                              output_path: str = "page_content.json"):
+def build_page_content_index(parsed_data_dir: str = None,
+                              output_path: str = None):
     """
     构建页面内容索引：将所有PDF的markdown按页拆分并保存
     输出格式: [{"filename": str, "page": int, "text": str, "tables": [str]}]
     """
-    parsed_dir = Path(parsed_data_dir)
+    parsed_dir = Path(parsed_data_dir) if parsed_data_dir else PARSED_DIR
+    output_path = Path(output_path) if output_path else (Path("page_content.json"))
     index_file = parsed_dir / "parse_index.json"
 
     if not index_file.exists():
@@ -224,10 +227,12 @@ def build_page_content_index(parsed_data_dir: str = "parsed_data",
 if __name__ == "__main__":
     import argparse
 
+    from src.config import DATA_DIR
+
     parser = argparse.ArgumentParser(description="PDF解析工具")
-    parser.add_argument("--pdf_dir", type=str, default="财报数据库", help="PDF文件目录")
-    parser.add_argument("--parsed_dir", type=str, default="parsed_data", help="MinerU解析输出目录")
-    parser.add_argument("--image_dir", type=str, default="page_images", help="页面图片输出目录")
+    parser.add_argument("--pdf_dir", type=str, default=str(DATA_DIR), help="PDF文件目录")
+    parser.add_argument("--parsed_dir", type=str, default=None, help="MinerU解析输出目录")
+    parser.add_argument("--image_dir", type=str, default=None, help="页面图片输出目录")
     parser.add_argument("--dpi", type=int, default=200, help="图片DPI")
     parser.add_argument("--skip_parse", action="store_true", help="跳过MinerU解析，只转图片")
     parser.add_argument("--skip_images", action="store_true", help="跳过图片转换")
