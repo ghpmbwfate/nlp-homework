@@ -14,6 +14,7 @@ from sentence_transformers import CrossEncoder
 
 from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, IMAGES_DIR
 from .multi_recover import title_search, keyword_search, summary_search
+from .reranking import multi_stage_rerank
 
 
 def load_dense_index(chroma_dir: str = None,
@@ -171,13 +172,15 @@ class Retriever:
                  bm25_top_k: int = 10,
                  final_top_k: int = 3,
                  multi_indexes: dict | None = None,
-                 enable_multi_recall: bool = False):
+                 enable_multi_recall: bool = False,
+                 enable_multi_stage_rerank: bool = False):
         print("[INFO] 初始化检索器...")
         self.image_dir = image_dir or str(IMAGES_DIR)
         self.dense_top_k = dense_top_k
         self.bm25_top_k = bm25_top_k
         self.final_top_k = final_top_k
         self.enable_multi_recall = enable_multi_recall
+        self.enable_multi_stage_rerank = enable_multi_stage_rerank
         self.multi_indexes = multi_indexes or {}
 
         # 加载索引
@@ -190,11 +193,13 @@ class Retriever:
 
         if enable_multi_recall and multi_indexes:
             print(f"[INFO] 多路召回已启用 (title, keyword, summary)")
+        if enable_multi_stage_rerank:
+            print(f"[INFO] 多阶段重排序已启用 (RRF→CE→MMR→TypeFilter)")
         print("[INFO] 检索器初始化完成")
 
-    def search(self, query: str) -> list[dict]:
+    def search(self, query: str, question_type: str | None = None) -> list[dict]:
         """
-        完整检索流程（支持多路召回）
+        完整检索流程（支持多路召回 + 多阶段重排序）
         返回: [{
             "chunk_id", "content", "filename", "page", "type",
             "rerank_score", "image_path"
@@ -226,15 +231,27 @@ class Retriever:
             summary_hits=summary_hits if summary_hits else None,
         )
 
-        # 5. 重排序
-        if self.reranker is not None:
-            # 用reranker预测
+        # 5. 重排序（多阶段 或 单阶段）
+        if self.enable_multi_stage_rerank:
+            # 多阶段重排序: RRF→CE→MMR→TypeFilter
+            top_results = multi_stage_rerank(
+                query, merged,
+                reranker=self.reranker,
+                question_type=question_type,
+                coarse_k=min(len(merged), 50),
+                fine_k=min(len(merged), 20),
+                final_k=self.final_top_k,
+            )
+        elif self.reranker is not None:
+            # 单阶段 CrossEncoder 重排序（兼容旧行为）
             pairs = [(query, c["content"]) for c in merged]
             scores = self.reranker.predict(pairs)
             for i, c in enumerate(merged):
                 c["rerank_score"] = float(scores[i])
             merged.sort(key=lambda x: x["rerank_score"], reverse=True)
-        top_results = merged[:self.final_top_k]
+            top_results = merged[:self.final_top_k]
+        else:
+            top_results = merged[:self.final_top_k]
 
         # 6. 添加图片路径
         for result in top_results:
@@ -244,7 +261,7 @@ class Retriever:
 
         return top_results
 
-    def search_with_context(self, query: str) -> dict:
+    def search_with_context(self, query: str, question_type: str | None = None) -> dict:
         """
         检索并组装上下文信息，供VLM使用
         返回: {
@@ -255,7 +272,7 @@ class Retriever:
             "results": list       # 完整检索结果
         }
         """
-        results = self.search(query)
+        results = self.search(query, question_type=question_type)
         if not results:
             return {
                 "top_filename": "",

@@ -9,6 +9,8 @@ from pathlib import Path
 from src.retrieval import Retriever
 from src.generation import VLMGenerator
 from src.generation.citation import clean_answer_no_citations, has_citations
+from src.generation.question_classifier import classify_question
+from src.generation.self_rag import run_self_check
 from src.config import (
     DEFAULT_TEST_PATH,
     DEFAULT_OUTPUT_PATH,
@@ -115,8 +117,13 @@ def run_pipeline(test_path: str = None,
 
         print(f"\n[{i+1}/{len(questions)}] 问题: {question[:50]}...")
 
-        # 检索
-        context = retriever.search_with_context(question)
+        # 预分类问题类型（供检索和生成共用）
+        qtype_enum = classify_question(question)
+        qtype_str = qtype_enum.value
+        print(f"  类型: {qtype_str}")
+
+        # 检索（传入问题类型以启用多阶段重排序的类型过滤）
+        context = retriever.search_with_context(question, question_type=qtype_str)
         top_filename = context["top_filename"]
         top_page = context["top_page"]
         context_text = context["context_text"]
@@ -135,8 +142,11 @@ def run_pipeline(test_path: str = None,
         qtype = gen_result["question_type"]
         citations = gen_result["citations"]
 
-        print(f"  类型: {qtype}")
+        # Self-RAG: 自洽性检查
+        self_check = run_self_check(answer, context_text)
+        verdict = self_check["verdict"]
         print(f"  答案: {answer[:80]}...")
+        print(f"  自洽性: {verdict} (数字支持率={self_check['num_support_ratio']:.2f})")
 
         results.append({
             "question": question,
@@ -146,6 +156,12 @@ def run_pipeline(test_path: str = None,
             "question_type": qtype,
             "citations": citations,
             "has_citations": has_citations(answer),
+            "self_check": {
+                "verdict": verdict,
+                "num_support_ratio": self_check["num_support_ratio"],
+                "keyword_overlap_ratio": self_check["keyword_overlap_ratio"],
+                "feedback": self_check["feedback"],
+            },
         })
 
     # 5. 保存结果
