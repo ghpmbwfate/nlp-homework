@@ -13,6 +13,7 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
 from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, IMAGES_DIR
+from .multi_recover import title_search, keyword_search, summary_search
 
 
 def load_dense_index(chroma_dir: str = None,
@@ -95,9 +96,12 @@ def bm25_search(bm25: BM25Okapi, chunks: list[dict],
 
 def merge_and_deduplicate(dense_hits: list[dict],
                           bm25_hits: list[dict],
+                          title_hits: list[dict] | None = None,
+                          keyword_hits: list[dict] | None = None,
+                          summary_hits: list[dict] | None = None,
                           k: int = 60) -> list[dict]:
     """
-    使用RRF (Reciprocal Rank Fusion) 合并两路检索结果。
+    使用RRF (Reciprocal Rank Fusion) 合并多路检索结果。
 
     不直接叠加原始分数（dense score ∈ [0,1] 与 BM25 score 无界，量纲不同），
     而是基于排名进行融合：
@@ -107,23 +111,34 @@ def merge_and_deduplicate(dense_hits: list[dict],
     scores: dict[str, float] = {}
     merged: dict[str, dict] = {}
 
+    def _process_hits(hits, source_name):
+        for rank, hit in enumerate(hits):
+            cid = hit["chunk_id"]
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+            if cid in merged:
+                if source_name not in merged[cid]["sources"]:
+                    merged[cid]["sources"].append(source_name)
+            else:
+                merged[cid] = {**hit}
+                merged[cid]["sources"] = [source_name]
+
     # dense 路
-    for rank, hit in enumerate(dense_hits):
-        cid = hit["chunk_id"]
-        scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
-        merged[cid] = {**hit}
-        merged[cid]["sources"] = ["dense"]
+    _process_hits(dense_hits, "dense")
 
     # bm25 路
-    for rank, hit in enumerate(bm25_hits):
-        cid = hit["chunk_id"]
-        scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
-        if cid in merged:
-            if "bm25" not in merged[cid]["sources"]:
-                merged[cid]["sources"].append("bm25")
-        else:
-            merged[cid] = {**hit}
-            merged[cid]["sources"] = ["bm25"]
+    _process_hits(bm25_hits, "bm25")
+
+    # title 路
+    if title_hits:
+        _process_hits(title_hits, "title")
+
+    # keyword 路
+    if keyword_hits:
+        _process_hits(keyword_hits, "keyword")
+
+    # summary 路
+    if summary_hits:
+        _process_hits(summary_hits, "summary")
 
     # 写入 RRF 分数并排序
     for cid in merged:
@@ -144,7 +159,7 @@ def get_page_image_path(filename: str, page: int,
 
 
 class Retriever:
-    """检索器：封装完整的检索流程"""
+    """检索器：封装完整的检索流程（含多路召回）"""
 
     def __init__(self,
                  chroma_dir: str = None,
@@ -154,12 +169,16 @@ class Retriever:
                  reranker_model: str = "BAAI/bge-reranker-large",
                  dense_top_k: int = 10,
                  bm25_top_k: int = 10,
-                 final_top_k: int = 3):
+                 final_top_k: int = 3,
+                 multi_indexes: dict | None = None,
+                 enable_multi_recall: bool = False):
         print("[INFO] 初始化检索器...")
         self.image_dir = image_dir or str(IMAGES_DIR)
         self.dense_top_k = dense_top_k
         self.bm25_top_k = bm25_top_k
         self.final_top_k = final_top_k
+        self.enable_multi_recall = enable_multi_recall
+        self.multi_indexes = multi_indexes or {}
 
         # 加载索引
         self.collection = load_dense_index(chroma_dir, dense_model)
@@ -169,11 +188,13 @@ class Retriever:
         print(f"[INFO] 加载reranker: {reranker_model}")
         self.reranker = CrossEncoder(reranker_model)
 
+        if enable_multi_recall and multi_indexes:
+            print(f"[INFO] 多路召回已启用 (title, keyword, summary)")
         print("[INFO] 检索器初始化完成")
 
     def search(self, query: str) -> list[dict]:
         """
-        完整检索流程
+        完整检索流程（支持多路召回）
         返回: [{
             "chunk_id", "content", "filename", "page", "type",
             "rerank_score", "image_path"
@@ -185,10 +206,27 @@ class Retriever:
         # 2. BM25检索
         bm25_hits = bm25_search(self.bm25, self.chunks, query, self.bm25_top_k)
 
-        # 3. 合并去重
-        merged = merge_and_deduplicate(dense_hits, bm25_hits)
+        # 3. 多路召回（title, keyword, summary）
+        title_hits = []
+        keyword_hits = []
+        summary_hits = []
+        if self.enable_multi_recall and self.multi_indexes:
+            if "title_index" in self.multi_indexes:
+                title_hits = title_search(query, self.multi_indexes["title_index"], top_k=5)
+            if "keyword_index" in self.multi_indexes:
+                keyword_hits = keyword_search(query, self.multi_indexes["keyword_index"], top_k=5)
+            if "summary_index" in self.multi_indexes:
+                summary_hits = summary_search(query, self.multi_indexes["summary_index"], top_k=5)
 
-        # 4. 重排序
+        # 4. 合并去重
+        merged = merge_and_deduplicate(
+            dense_hits, bm25_hits,
+            title_hits=title_hits if title_hits else None,
+            keyword_hits=keyword_hits if keyword_hits else None,
+            summary_hits=summary_hits if summary_hits else None,
+        )
+
+        # 5. 重排序
         if self.reranker is not None:
             # 用reranker预测
             pairs = [(query, c["content"]) for c in merged]
@@ -198,7 +236,7 @@ class Retriever:
             merged.sort(key=lambda x: x["rerank_score"], reverse=True)
         top_results = merged[:self.final_top_k]
 
-        # 5. 添加图片路径
+        # 6. 添加图片路径
         for result in top_results:
             result["image_path"] = get_page_image_path(
                 result["filename"], result["page"], self.image_dir

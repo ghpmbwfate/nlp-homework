@@ -8,6 +8,7 @@ from pathlib import Path
 
 from src.retrieval import Retriever
 from src.generation import VLMGenerator
+from src.generation.citation import clean_answer_no_citations, has_citations
 from src.config import (
     DEFAULT_TEST_PATH,
     DEFAULT_OUTPUT_PATH,
@@ -124,20 +125,27 @@ def run_pipeline(test_path: str = None,
         print(f"  定位: {top_filename} 第{top_page}页")
 
         # 生成答案
-        answer = generator.generate(
+        gen_result = generator.generate(
             question=question,
             context_text=context_text,
             image_path=image_path,
             max_new_tokens=max_new_tokens
         )
+        answer = gen_result["answer"]
+        qtype = gen_result["question_type"]
+        citations = gen_result["citations"]
 
+        print(f"  类型: {qtype}")
         print(f"  答案: {answer[:80]}...")
 
         results.append({
             "question": question,
             "filename": top_filename,
             "page": top_page,
-            "answer": answer
+            "answer": answer,
+            "question_type": qtype,
+            "citations": citations,
+            "has_citations": has_citations(answer),
         })
 
     # 5. 保存结果

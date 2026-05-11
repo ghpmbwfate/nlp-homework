@@ -1,11 +1,16 @@
 """
 VLM答案生成模块：加载Qwen2-VL，结合检索文本+页面图片生成答案
+支持分问题类型Prompt和引用溯源
 """
 
 import torch
 from PIL import Image
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
+
+from .question_classifier import classify_question, QuestionType
+from .prompts import load_prompt_template
+from .citation import add_citation_instruction, extract_citations
 
 
 PROMPT_TEMPLATE = """你是一个专业的财报分析助手。请根据以下参考信息准确回答问题。
@@ -72,28 +77,60 @@ class VLMGenerator:
         print("[INFO] VLM模型加载完成")
 
     def generate(self, question: str, context_text: str,
-                 image_path: str | None = None, max_new_tokens: int = 512) -> str:
+                 image_path: str | None = None, max_new_tokens: int = 512,
+                 question_type: str | None = None) -> dict:
         """
-        生成答案
+        生成答案（支持分问题类型Prompt + 引用溯源）
 
         Args:
             question: 用户问题
             context_text: 检索到的上下文文本
             image_path: 页面图片路径（可选）
             max_new_tokens: 最大生成token数
+            question_type: 问题类型，None时自动分类
 
         Returns:
-            生成的答案文本
+            {"answer": str, "question_type": str, "citations": list}
         """
-        if image_path:
-            return self._generate_with_image(question, context_text, image_path, max_new_tokens)
+        # 分类问题类型
+        if question_type is None:
+            qtype = classify_question(question)
         else:
-            return self._generate_text_only(question, context_text, max_new_tokens)
+            qtype = QuestionType(question_type)
+        qtype_str = qtype.value
 
-    def _generate_with_image(self, question: str, context_text: str,
-                             image_path: str, max_new_tokens: int) -> str:
-        """带图片的答案生成"""
-        prompt = PROMPT_TEMPLATE.format(question=question, context=context_text)
+        # 加载对应类型的 Prompt 模板
+        prompt_template = load_prompt_template(qtype_str)
+
+        # 追加引用溯源指令
+        prompt_with_citation = add_citation_instruction(prompt_template)
+
+        # 生成答案
+        if image_path:
+            answer = self._generate_with_prompt(
+                question, context_text, image_path,
+                prompt_with_citation, max_new_tokens
+            )
+        else:
+            answer = self._generate_text_with_prompt(
+                question, context_text,
+                prompt_with_citation, max_new_tokens
+            )
+
+        # 提取引用溯源
+        citations = extract_citations(answer)
+
+        return {
+            "answer": answer,
+            "question_type": qtype_str,
+            "citations": citations,
+        }
+
+    def _generate_with_prompt(self, question: str, context_text: str,
+                               image_path: str, prompt_template: str,
+                               max_new_tokens: int) -> str:
+        """带图片 + 自定义Prompt的答案生成"""
+        prompt = prompt_template.format(question=question, context=context_text)
 
         from pathlib import Path
         image_uri = Path(image_path).as_uri()
@@ -109,10 +146,11 @@ class VLMGenerator:
 
         return self._run_inference(messages, max_new_tokens)
 
-    def _generate_text_only(self, question: str, context_text: str,
-                            max_new_tokens: int) -> str:
-        """纯文本答案生成（无图片时fallback）"""
-        prompt = PROMPT_TEMPLATE_NO_IMAGE.format(question=question, context=context_text)
+    def _generate_text_with_prompt(self, question: str, context_text: str,
+                                    prompt_template: str,
+                                    max_new_tokens: int) -> str:
+        """纯文本 + 自定义Prompt的答案生成"""
+        prompt = prompt_template.format(question=question, context=context_text)
 
         messages = [
             {
@@ -169,18 +207,19 @@ class VLMGenerator:
             questions: [{"question": str, "context_text": str, "image_path": str}]
 
         Returns:
-            [{"answer": str}]
+            [{"answer": str, "question_type": str, "citations": list}]
         """
         results = []
         for i, q in enumerate(questions):
             print(f"[INFO] 生成答案 {i+1}/{len(questions)}: {q['question'][:30]}...")
-            answer = self.generate(
+            result = self.generate(
                 question=q["question"],
                 context_text=q["context_text"],
                 image_path=q.get("image_path"),
-                max_new_tokens=max_new_tokens
+                max_new_tokens=max_new_tokens,
+                question_type=q.get("question_type"),
             )
-            results.append({"answer": answer})
+            results.append(result)
         return results
 
 
