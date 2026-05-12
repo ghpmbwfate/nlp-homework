@@ -2,7 +2,12 @@
 统一配置：管理所有默认路径和模型参数
 """
 
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
@@ -37,3 +42,15 @@ FINAL_TOP_K = 3
 # 生成参数
 MAX_NEW_TOKENS = 512
 LOAD_IN_4BIT = True
+
+# LLM API 配置
+DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
+DASHSCOPE_BASE_URL = os.environ.get(
+    "DASHSCOPE_BASE_URL",
+    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+)
+DASHSCOPE_MODEL = os.environ.get("DASHSCOPE_MODEL", "qwen-turbo")
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
