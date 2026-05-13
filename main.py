@@ -6,10 +6,11 @@ import json
 import argparse
 from pathlib import Path
 
-from src.retrieval import Retriever, QueryRewriter
-from src.retrieval.multi_recover import build_all_multi_indexes
-from src.generation import VLMGenerator, PostProcessor, SelfRAG
+from src.retrieval import Retriever
+from src.generation import VLMGenerator
 from src.generation.citation import clean_answer_no_citations, has_citations
+from src.generation.question_classifier import classify_question
+from src.generation.self_rag import run_self_check
 from src.config import (
     DEFAULT_TEST_PATH,
     DEFAULT_OUTPUT_PATH,
@@ -53,13 +54,10 @@ def run_pipeline(test_path: str = None,
                  dense_top_k: int = None,
                  bm25_top_k: int = None,
                  final_top_k: int = None,
-                 max_new_tokens: int = None,
-                 enable_query_rewrite: bool = False,
-                 enable_multi_recall: bool = False,
-                 enable_postprocess: bool = False,
-                 enable_self_rag: bool = False):
-    """Run full pipeline with optional enhancements."""
+                 max_new_tokens: int = None):
+    """运行完整pipeline"""
 
+    # 使用默认值
     test_path = test_path or str(DEFAULT_TEST_PATH)
     output_path = output_path or str(DEFAULT_OUTPUT_PATH)
     chroma_dir = chroma_dir or str(INDEX_CHROMA_DIR)
@@ -74,42 +72,17 @@ def run_pipeline(test_path: str = None,
     final_top_k = final_top_k if final_top_k is not None else FINAL_TOP_K
     max_new_tokens = max_new_tokens if max_new_tokens is not None else MAX_NEW_TOKENS
 
-    # Step 1: Load test data
+    # 1. 加载测试数据
     print("=" * 50)
     print("Step 1: 加载测试数据")
     print("=" * 50)
     questions = load_test_data(test_path)
     print(f"[INFO] 加载了 {len(questions)} 个问题")
 
-    # Step 2: Build multi-recall indexes if enabled
-    multi_indexes = {}
-    if enable_multi_recall:
-        print()
-        print("=" * 50)
-        print("Step 2a: 构建多路召回索引")
-        print("=" * 50)
-        from src.indexing.indexer import load_page_content
-        pages = load_page_content("page_content.json")
-        multi_indexes = build_all_multi_indexes(pages)
-        print("[INFO] 多路召回索引构建完成")
-
-    # Step 3: Init query rewriter if enabled
-    query_rewriter = None
-    if enable_query_rewrite:
-        print()
-        print("=" * 50)
-        print("Step 2b: 初始化Query改写器")
-        print("=" * 50)
-        try:
-            query_rewriter = QueryRewriter()
-            print("[INFO] Query改写器初始化完成")
-        except ValueError as e:
-            print(f"[WARN] Query改写器初始化失败: {e}")
-
-    # Step 4: Init retriever
+    # 2. 初始化检索器
     print()
     print("=" * 50)
-    print("Step 3: 初始化检索器")
+    print("Step 2: 初始化检索器")
     print("=" * 50)
     retriever = Retriever(
         chroma_dir=chroma_dir,
@@ -119,37 +92,23 @@ def run_pipeline(test_path: str = None,
         reranker_model=reranker_model,
         dense_top_k=dense_top_k,
         bm25_top_k=bm25_top_k,
-        final_top_k=final_top_k,
-        multi_indexes=multi_indexes,
-        enable_multi_recall=enable_multi_recall,
-        query_rewriter=query_rewriter,
-        enable_query_rewrite=enable_query_rewrite,
+        final_top_k=final_top_k
     )
 
-    # Step 5: Init VLM generator
+    # 3. 初始化VLM生成器
     print()
     print("=" * 50)
-    print("Step 4: 初始化VLM生成器")
+    print("Step 3: 初始化VLM生成器")
     print("=" * 50)
     generator = VLMGenerator(
         model_name=vlm_model,
         load_in_4bit=load_in_4bit
     )
 
-    # Step 6: Init optional modules
-    postprocessor = PostProcessor() if enable_postprocess else None
-    self_rag = None
-    if enable_self_rag:
-        try:
-            self_rag = SelfRAG()
-            print("[INFO] Self-RAG初始化完成")
-        except ValueError as e:
-            print(f"[WARN] Self-RAG初始化失败: {e}")
-
-    # Step 7: Process questions
+    # 4. 逐题检索+生成
     print()
     print("=" * 50)
-    print("Step 5: 逐题处理")
+    print("Step 4: 逐题处理")
     print("=" * 50)
 
     results = []
@@ -158,8 +117,13 @@ def run_pipeline(test_path: str = None,
 
         print(f"\n[{i+1}/{len(questions)}] 问题: {question[:50]}...")
 
-        # Retrieve
-        context = retriever.search_with_context(question)
+        # 预分类问题类型（供检索和生成共用）
+        qtype_enum = classify_question(question)
+        qtype_str = qtype_enum.value
+        print(f"  类型: {qtype_str}")
+
+        # 检索（传入问题类型以启用多阶段重排序的类型过滤）
+        context = retriever.search_with_context(question, question_type=qtype_str)
         top_filename = context["top_filename"]
         top_page = context["top_page"]
         context_text = context["context_text"]
@@ -167,7 +131,7 @@ def run_pipeline(test_path: str = None,
 
         print(f"  定位: {top_filename} 第{top_page}页")
 
-        # Generate answer
+        # 生成答案
         gen_result = generator.generate(
             question=question,
             context_text=context_text,
@@ -178,24 +142,11 @@ def run_pipeline(test_path: str = None,
         qtype = gen_result["question_type"]
         citations = gen_result["citations"]
 
-        # Post-process
-        if postprocessor is not None:
-            pp_result = postprocessor.process(answer, context_text, qtype)
-            answer = pp_result["answer"]
-            print(f"  后处理: 幻觉数字={len(pp_result['hallucinated_numbers'])}, "
-                  f"截断={pp_result['was_truncated']}, 空答案={pp_result['was_empty']}")
-
-        # Self-RAG
-        if self_rag is not None:
-            sr_result = self_rag.check_and_refine(
-                answer, context_text, generator, question
-            )
-            answer = sr_result["answer"]
-            print(f"  Self-RAG: 验证={sr_result['verification']}, "
-                  f"尝试次数={sr_result['attempts']}")
-
-        print(f"  类型: {qtype}")
+        # Self-RAG: 自洽性检查
+        self_check = run_self_check(answer, context_text)
+        verdict = self_check["verdict"]
         print(f"  答案: {answer[:80]}...")
+        print(f"  自洽性: {verdict} (数字支持率={self_check['num_support_ratio']:.2f})")
 
         results.append({
             "question": question,
@@ -205,14 +156,21 @@ def run_pipeline(test_path: str = None,
             "question_type": qtype,
             "citations": citations,
             "has_citations": has_citations(answer),
+            "self_check": {
+                "verdict": verdict,
+                "num_support_ratio": self_check["num_support_ratio"],
+                "keyword_overlap_ratio": self_check["keyword_overlap_ratio"],
+                "feedback": self_check["feedback"],
+            },
         })
 
-    # Step 8: Save results
+    # 5. 保存结果
     print()
     print("=" * 50)
-    print("Step 6: 保存结果")
+    print("Step 5: 保存结果")
     print("=" * 50)
 
+    # 确保输出目录存在
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
@@ -238,14 +196,6 @@ if __name__ == "__main__":
     parser.add_argument("--bm25_top_k", type=int, default=None)
     parser.add_argument("--final_top_k", type=int, default=None)
     parser.add_argument("--max_new_tokens", type=int, default=None)
-    parser.add_argument("--enable_query_rewrite", action="store_true",
-                        help="启用Query改写")
-    parser.add_argument("--enable_multi_recall", action="store_true",
-                        help="启用多路召回")
-    parser.add_argument("--enable_postprocess", action="store_true",
-                        help="启用答案后处理")
-    parser.add_argument("--enable_self_rag", action="store_true",
-                        help="启用Self-RAG校验")
 
     args = parser.parse_args()
 
@@ -262,9 +212,5 @@ if __name__ == "__main__":
         dense_top_k=args.dense_top_k,
         bm25_top_k=args.bm25_top_k,
         final_top_k=args.final_top_k,
-        max_new_tokens=args.max_new_tokens,
-        enable_query_rewrite=args.enable_query_rewrite,
-        enable_multi_recall=args.enable_multi_recall,
-        enable_postprocess=args.enable_postprocess,
-        enable_self_rag=args.enable_self_rag,
+        max_new_tokens=args.max_new_tokens
     )

@@ -1,105 +1,142 @@
-"""Tests for self_rag module."""
+"""Tests for Self-RAG self-consistency check module."""
 
 import pytest
-
-from src.generation.self_rag import SelfRAG
-
-
-class TestSelfRAGInit:
-    def test_init_with_api_key(self):
-        sr = SelfRAG(api_key="fake-key")
-        assert sr.model == "qwen-turbo"
-        assert sr.client is not None
-
-    def test_init_without_api_key_raises(self, monkeypatch):
-        monkeypatch.setattr(
-            "src.generation.self_rag.DASHSCOPE_API_KEY", ""
-        )
-        monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
-        with pytest.raises(ValueError, match="API key"):
-            SelfRAG()
-
-    def test_init_reads_env_var(self, monkeypatch):
-        monkeypatch.setenv("DASHSCOPE_API_KEY", "env-key")
-        sr = SelfRAG()
-        assert sr.client is not None
+from src.generation.self_rag import (
+    extract_numbers,
+    tokenize,
+    check_support,
+    self_consistency_vote,
+    get_retrieval_feedback,
+    run_self_check,
+)
 
 
-class TestVerify:
-    def test_support_verdict(self, monkeypatch):
-        sr = SelfRAG(api_key="fake")
-        monkeypatch.setattr(sr, "_call_llm", lambda s, u: "support")
-        assert sr.verify("答案", "上下文") == "support"
+class TestExtractNumbers:
+    def test_integers(self):
+        assert "123" in extract_numbers("营收123亿元")
 
-    def test_contradict_verdict(self, monkeypatch):
-        sr = SelfRAG(api_key="fake")
-        monkeypatch.setattr(sr, "_call_llm", lambda s, u: "contradict")
-        assert sr.verify("答案", "上下文") == "contradict"
+    def test_decimals(self):
+        nums = extract_numbers("增长12.5个百分点")
+        assert "12.5" in nums
 
-    def test_neutral_verdict(self, monkeypatch):
-        sr = SelfRAG(api_key="fake")
-        monkeypatch.setattr(sr, "_call_llm", lambda s, u: "neutral")
-        assert sr.verify("答案", "上下文") == "neutral"
+    def test_percentages(self):
+        nums = extract_numbers("同比增长25%")
+        assert "25%" in nums
 
-    def test_fallback_to_neutral(self, monkeypatch):
-        sr = SelfRAG(api_key="fake")
-        monkeypatch.setattr(sr, "_call_llm", lambda s, u: "unknown")
-        assert sr.verify("答案", "上下文") == "neutral"
+    def test_mixed(self):
+        nums = extract_numbers("营收50亿元，增长12.5%，利润8亿")
+        assert len(nums) >= 3
 
-
-class TestVote:
     def test_empty(self):
-        sr = SelfRAG(api_key="fake")
-        assert sr.vote([]) == ""
-
-    def test_single(self):
-        sr = SelfRAG(api_key="fake")
-        assert sr.vote(["唯一答案"]) == "唯一答案"
-
-    def test_most_consistent(self):
-        sr = SelfRAG(api_key="fake")
-        # 答案1 和 答案2 更相似，答案3 不同
-        answers = ["营收100亿元", "营收约100亿元", "利润50亿元"]
-        result = sr.vote(answers)
-        assert result in ["营收100亿元", "营收约100亿元"]
+        assert extract_numbers("没有数字") == []
 
 
-class MockGenerator:
-    """Mock generator for testing check_and_refine."""
+class TestTokenize:
+    def test_chinese_tokenize(self):
+        tokens = tokenize("速冻面米制品市场营收增长")
+        assert len(tokens) > 0
+        assert "速冻" in tokens or "面米" in tokens or "制品" in tokens
 
-    def __init__(self, answers=None):
-        self.answers = answers or []
-        self.call_count = 0
-
-    def generate(self, **kwargs):
-        ans = self.answers[self.call_count % len(self.answers)]
-        self.call_count += 1
-        return {"answer": ans}
+    def test_stop_words_removed(self):
+        tokens = tokenize("这是一个测试的句子")
+        assert "的" not in tokens
+        assert "是" not in tokens
 
 
-class TestCheckAndRefine:
-    def test_support_no_regen(self, monkeypatch):
-        sr = SelfRAG(api_key="fake")
-        monkeypatch.setattr(sr, "_call_llm", lambda s, u: "support")
-        gen = MockGenerator()
-        result = sr.check_and_refine("答案", "上下文", gen, "问题")
-        assert result["verification"] == "support"
-        assert result["attempts"] == 1
+class TestCheckSupport:
+    def test_well_supported(self):
+        context = "公司2024年营收为50亿元，同比增长20%。主要产品包括速冻面米制品。"
+        answer = "2024年公司营收为50亿元，增长了20%。"
+        assert check_support(answer, context) == "Support"
 
-    def test_contradict_regenerates(self, monkeypatch):
-        sr = SelfRAG(api_key="fake")
-        monkeypatch.setattr(sr, "_call_llm", lambda s, u: "contradict")
-        gen = MockGenerator(["新答案"])
-        result = sr.check_and_refine("答案", "上下文", gen, "问题")
-        assert result["verification"] == "contradict"
-        assert result["attempts"] == 2
-        assert result["answer"] == "新答案"
+    def test_contradict_hallucinated_numbers(self):
+        context = "公司2024年营收为50亿元。"
+        answer = "公司2024年营收为120亿元，利润为30亿元，市场份额为15%。"
+        result = check_support(answer, context)
+        assert result in ("Contradict", "Neutral")
 
-    def test_max_attempts(self, monkeypatch):
-        sr = SelfRAG(api_key="fake")
-        monkeypatch.setattr(sr, "_call_llm", lambda s, u: "contradict")
-        gen = MockGenerator(["a", "b", "c"])
-        result = sr.check_and_refine(
-            "答案", "上下文", gen, "问题", max_attempts=3
-        )
-        assert result["attempts"] == 3
+    def test_empty_context(self):
+        assert check_support("营收50亿", "") == "Neutral"
+
+    def test_empty_answer(self):
+        assert check_support("", "营收50亿") == "Neutral"
+
+    def test_unable_to_answer(self):
+        context = "公司主要生产汽车零部件。"
+        answer = "根据提供的信息无法回答关于营收的问题。"
+        result = check_support(answer, context)
+        assert result == "Neutral"
+
+    def test_similar_keywords(self):
+        context = "速冻面米制品市场规模持续扩大，公司在该领域具有竞争优势。"
+        answer = "速冻面米制品市场在扩大，公司有竞争优势。"
+        assert check_support(answer, context) == "Support"
+
+
+class TestSelfConsistencyVote:
+    def test_single_answer(self):
+        answer, count = self_consistency_vote(["答案A"])
+        assert answer == "答案A"
+        assert count == 1
+
+    def test_identical_answers(self):
+        answers = ["速冻面米制品营收增长", "速冻面米制品营收增长", "速冻面米制品营收增长"]
+        answer, count = self_consistency_vote(answers)
+        assert "速冻" in answer
+        assert count >= 2
+
+    def test_different_answers(self):
+        answers = [
+            "速冻面米制品营收增长20%",
+            "速冻面米制品营收增长大约20%",
+            "汽车零部件市场下滑",
+        ]
+        answer, count = self_consistency_vote(answers)
+        # The two similar answers should win
+        assert "20" in answer or "速冻" in answer
+        assert count >= 2
+
+    def test_empty_list(self):
+        answer, count = self_consistency_vote([])
+        assert answer == ""
+        assert count == 0
+
+
+class TestGetRetrievalFeedback:
+    def test_contradict_feedback(self):
+        fb = get_retrieval_feedback("Contradict")
+        assert fb["action"] == "expand_retrieval"
+        assert "幻觉" in fb["reason"]
+
+    def test_support_feedback(self):
+        fb = get_retrieval_feedback("Support")
+        assert fb["action"] == "keep"
+
+    def test_neutral_feedback(self):
+        fb = get_retrieval_feedback("Neutral")
+        assert fb["action"] == "review"
+
+
+class TestRunSelfCheck:
+    def test_supported_answer(self):
+        context = "公司2024年营收为50亿元，利润为8亿元。"
+        answer = "2024年营收50亿元，利润8亿元。"
+        result = run_self_check(answer, context)
+        assert result["verdict"] == "Support"
+        assert "feedback" in result
+        assert "num_support_ratio" in result
+        assert result["num_support_ratio"] >= 0.8
+
+    def test_contradict_answer(self):
+        context = "公司营收约10亿元。"
+        answer = "公司营收120亿元，利润30亿元，市场份额15%。"
+        result = run_self_check(answer, context)
+        assert result["verdict"] in ("Contradict", "Neutral")
+        assert result["num_support_ratio"] <= 0.5
+
+    def test_includes_details(self):
+        result = run_self_check("营收50亿", "营收50亿元")
+        assert "answer_numbers_found" in result
+        assert "context_numbers_found" in result
+        assert isinstance(result["num_support_ratio"], float)
+        assert isinstance(result["keyword_overlap_ratio"], float)

@@ -14,7 +14,7 @@ from sentence_transformers import CrossEncoder
 
 from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, IMAGES_DIR
 from .multi_recover import title_search, keyword_search, summary_search
-from .query_rewriting import QueryRewriter, NoOpQueryRewriter
+from .reranking import multi_stage_rerank
 
 
 def load_dense_index(chroma_dir: str = None,
@@ -173,29 +173,15 @@ class Retriever:
                  final_top_k: int = 3,
                  multi_indexes: dict | None = None,
                  enable_multi_recall: bool = False,
-                 query_rewriter=None,
-                 enable_query_rewrite: bool = False):
+                 enable_multi_stage_rerank: bool = False):
         print("[INFO] 初始化检索器...")
         self.image_dir = image_dir or str(IMAGES_DIR)
         self.dense_top_k = dense_top_k
         self.bm25_top_k = bm25_top_k
         self.final_top_k = final_top_k
         self.enable_multi_recall = enable_multi_recall
+        self.enable_multi_stage_rerank = enable_multi_stage_rerank
         self.multi_indexes = multi_indexes or {}
-        self.enable_query_rewrite = enable_query_rewrite
-
-        # Query rewriter
-        if enable_query_rewrite and query_rewriter is not None:
-            self.query_rewriter = query_rewriter
-        elif enable_query_rewrite:
-            try:
-                self.query_rewriter = QueryRewriter()
-            except ValueError:
-                print("[WARN] QueryRewriter 初始化失败，禁用改写")
-                self.query_rewriter = NoOpQueryRewriter()
-                self.enable_query_rewrite = False
-        else:
-            self.query_rewriter = NoOpQueryRewriter()
 
         # 加载索引
         self.collection = load_dense_index(chroma_dir, dense_model)
@@ -207,83 +193,67 @@ class Retriever:
 
         if enable_multi_recall and multi_indexes:
             print(f"[INFO] 多路召回已启用 (title, keyword, summary)")
-        if self.enable_query_rewrite:
-            print("[INFO] Query改写已启用")
+        if enable_multi_stage_rerank:
+            print(f"[INFO] 多阶段重排序已启用 (RRF→CE→MMR→TypeFilter)")
         print("[INFO] 检索器初始化完成")
 
-    def _search_single(self, query: str) -> list[dict]:
-        """Search with a single query (no rewriting)."""
+    def search(self, query: str, question_type: str | None = None) -> list[dict]:
+        """
+        完整检索流程（支持多路召回 + 多阶段重排序）
+        返回: [{
+            "chunk_id", "content", "filename", "page", "type",
+            "rerank_score", "image_path"
+        }]
+        """
+        # 1. 稠密检索
         dense_hits = dense_search(self.collection, query, self.dense_top_k)
+
+        # 2. BM25检索
         bm25_hits = bm25_search(self.bm25, self.chunks, query, self.bm25_top_k)
 
+        # 3. 多路召回（title, keyword, summary）
         title_hits = []
         keyword_hits = []
         summary_hits = []
         if self.enable_multi_recall and self.multi_indexes:
             if "title_index" in self.multi_indexes:
-                title_hits = title_search(
-                    query, self.multi_indexes["title_index"], top_k=5
-                )
+                title_hits = title_search(query, self.multi_indexes["title_index"], top_k=5)
             if "keyword_index" in self.multi_indexes:
-                keyword_hits = keyword_search(
-                    query, self.multi_indexes["keyword_index"], top_k=5
-                )
+                keyword_hits = keyword_search(query, self.multi_indexes["keyword_index"], top_k=5)
             if "summary_index" in self.multi_indexes:
-                summary_hits = summary_search(
-                    query, self.multi_indexes["summary_index"], top_k=5
-                )
+                summary_hits = summary_search(query, self.multi_indexes["summary_index"], top_k=5)
 
+        # 4. 合并去重
         merged = merge_and_deduplicate(
             dense_hits, bm25_hits,
             title_hits=title_hits if title_hits else None,
             keyword_hits=keyword_hits if keyword_hits else None,
             summary_hits=summary_hits if summary_hits else None,
         )
-        return merged
 
-    def _rerank(self, query: str, candidates: list[dict]) -> list[dict]:
-        """Rerank candidates with cross-encoder."""
-        if self.reranker is None or not candidates:
-            return candidates
-        pairs = [(query, c["content"]) for c in candidates]
-        scores = self.reranker.predict(pairs)
-        for i, c in enumerate(candidates):
-            c["rerank_score"] = float(scores[i])
-        return sorted(candidates, key=lambda x: x["rerank_score"], reverse=True)
+        # 5. 重排序（多阶段 或 单阶段）
+        if self.enable_multi_stage_rerank:
+            # 多阶段重排序: RRF→CE→MMR→TypeFilter
+            top_results = multi_stage_rerank(
+                query, merged,
+                reranker=self.reranker,
+                question_type=question_type,
+                coarse_k=min(len(merged), 50),
+                fine_k=min(len(merged), 20),
+                final_k=self.final_top_k,
+            )
+        elif self.reranker is not None:
+            # 单阶段 CrossEncoder 重排序（兼容旧行为）
+            pairs = [(query, c["content"]) for c in merged]
+            scores = self.reranker.predict(pairs)
+            for i, c in enumerate(merged):
+                c["rerank_score"] = float(scores[i])
+            merged.sort(key=lambda x: x["rerank_score"], reverse=True)
+            top_results = merged[:self.final_top_k]
+        else:
+            top_results = merged[:self.final_top_k]
 
-    def search(self, query: str) -> list[dict]:
-        """
-        Full search pipeline with optional query rewriting.
-        Returns top-k results with image paths.
-        """
-        queries = [query]
-        if self.enable_query_rewrite:
-            queries = self.query_rewriter.rewrite(query)
-            print(f"[INFO] Query改写: {query} -> {queries}")
-
-        # Retrieve for each query variant and merge
-        all_candidates: dict[str, dict] = {}
-        for q in queries:
-            hits = self._search_single(q)
-            for h in hits:
-                cid = h["chunk_id"]
-                if cid not in all_candidates:
-                    all_candidates[cid] = {**h}
-                    all_candidates[cid]["rewrite_sources"] = [q]
-                else:
-                    all_candidates[cid]["score"] = max(
-                        all_candidates[cid]["score"], h["score"]
-                    )
-                    all_candidates[cid]["rewrite_sources"].append(q)
-
-        candidates = list(all_candidates.values())
-        candidates.sort(key=lambda x: x["score"], reverse=True)
-
-        # Rerank using the original query
-        reranked = self._rerank(query, candidates)
-        top_results = reranked[:self.final_top_k]
-
-        # Add image paths
+        # 6. 添加图片路径
         for result in top_results:
             result["image_path"] = get_page_image_path(
                 result["filename"], result["page"], self.image_dir
@@ -291,7 +261,7 @@ class Retriever:
 
         return top_results
 
-    def search_with_context(self, query: str) -> dict:
+    def search_with_context(self, query: str, question_type: str | None = None) -> dict:
         """
         检索并组装上下文信息，供VLM使用
         返回: {
@@ -302,7 +272,7 @@ class Retriever:
             "results": list       # 完整检索结果
         }
         """
-        results = self.search(query)
+        results = self.search(query, question_type=question_type)
         if not results:
             return {
                 "top_filename": "",

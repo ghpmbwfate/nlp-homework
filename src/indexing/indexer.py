@@ -1,6 +1,7 @@
 """
 分块与索引构建模块
 - 按页分块 + 表格单独分块
+- 语义分块 + 滑动窗口（可选）
 - 稠密索引（ChromaDB + bge-m3）+ 稀疏索引（BM25 + jieba）
 """
 
@@ -159,7 +160,10 @@ def build_bm25_index(chunks: list[dict],
 def build_all_indexes(page_content_path: str = "page_content.json",
                       dense_model: str = "BAAI/bge-m3",
                       chroma_dir: str = None,
-                      bm25_dir: str = None):
+                      bm25_dir: str = None,
+                      use_semantic_chunking: bool = False,
+                      semantic_chunk_size: int = 500,
+                      semantic_overlap: int = 100):
     """构建所有索引"""
     print("=" * 50)
     print("Step 1: 加载页面内容")
@@ -171,7 +175,17 @@ def build_all_indexes(page_content_path: str = "page_content.json",
     print("=" * 50)
     print("Step 2: 创建chunk")
     print("=" * 50)
-    chunks = create_chunks(pages)
+    if use_semantic_chunking:
+        from .chunking import semantic_chunking
+        print(f"[INFO] 使用语义分块 (chunk_size={semantic_chunk_size}, overlap={semantic_overlap})")
+        chunks = semantic_chunking(
+            pages,
+            chunk_size=semantic_chunk_size,
+            overlap=semantic_overlap,
+            model_name=dense_model
+        )
+    else:
+        chunks = create_chunks(pages)
 
     print()
     print("=" * 50)
