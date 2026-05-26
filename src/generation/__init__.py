@@ -1,7 +1,7 @@
 def __getattr__(name):
-    if name == "VLMGenerator":
-        from .generator import VLMGenerator as _VLMGenerator
-        return _VLMGenerator
+    if name == "LLMGenerator":
+        from .generator import LLMGenerator as _LLMGenerator
+        return _LLMGenerator
     if name == "PostProcessor":
         from .postprocess import PostProcessor
         return PostProcessor

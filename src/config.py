@@ -29,21 +29,7 @@ DEFAULT_OUTPUT_PATH = OUTPUTS_DIR / "submit.json"
 DEFAULT_GROUND_TRUTH_PATH = QUESTIONS_DIR / "test_ground_truth.json"
 DEFAULT_EVAL_OUTPUT_PATH = OUTPUTS_DIR / "evaluation_result.json"
 
-# 模型配置
-DENSE_MODEL = "BAAI/bge-m3"
-RERANKER_MODEL = "BAAI/bge-reranker-large"
-VLM_MODEL = "Qwen/Qwen2-VL-7B-Instruct"
-
-# 检索参数
-DENSE_TOP_K = 10
-BM25_TOP_K = 10
-FINAL_TOP_K = 3
-
-# 生成参数
-MAX_NEW_TOKENS = 512
-LOAD_IN_4BIT = True
-
-# LLM API 配置
+# LLM API 配置（OPENAI_* 用于云端答案生成，DASHSCOPE_* 用于 query rewriter）
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
 DASHSCOPE_BASE_URL = os.environ.get(
     "DASHSCOPE_BASE_URL",
@@ -52,5 +38,20 @@ DASHSCOPE_BASE_URL = os.environ.get(
 DASHSCOPE_MODEL = os.environ.get("DASHSCOPE_MODEL", "qwen-turbo")
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_BASE_URL = os.environ.get(
+    "OPENAI_BASE_URL", "http://api.bnuzh.top:8080/v1"
+)
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "GPT-OSS-20B-BF16")
+
+# 模型配置
+DENSE_MODEL = "BAAI/bge-m3"
+RERANKER_MODEL = "BAAI/bge-reranker-large"
+LLM_MODEL = OPENAI_MODEL  # 答案生成 LLM（OpenAI 兼容 API 模型名）
+
+# 检索参数
+DENSE_TOP_K = 10
+BM25_TOP_K = 10
+FINAL_TOP_K = 3
+
+# 生成参数
+MAX_NEW_TOKENS = 512

@@ -1,5 +1,5 @@
 """
-主流程：读取test.json → 检索 → VLM生成 → 输出submit.json
+主流程：读取test.json → 检索 → LLM生成 → 输出submit.json
 """
 
 import json
@@ -7,7 +7,7 @@ import argparse
 from pathlib import Path
 
 from src.retrieval import Retriever
-from src.generation import VLMGenerator
+from src.generation import LLMGenerator
 from src.generation.citation import clean_answer_no_citations, has_citations
 from src.generation.question_classifier import classify_question
 from src.generation.self_rag import run_self_check
@@ -19,12 +19,11 @@ from src.config import (
     IMAGES_DIR,
     DENSE_MODEL,
     RERANKER_MODEL,
-    VLM_MODEL,
+    LLM_MODEL,
     DENSE_TOP_K,
     BM25_TOP_K,
     FINAL_TOP_K,
     MAX_NEW_TOKENS,
-    LOAD_IN_4BIT,
 )
 
 
@@ -49,8 +48,7 @@ def run_pipeline(test_path: str = None,
                  image_dir: str = None,
                  dense_model: str = None,
                  reranker_model: str = None,
-                 vlm_model: str = None,
-                 load_in_4bit: bool = None,
+                 llm_model: str = None,
                  dense_top_k: int = None,
                  bm25_top_k: int = None,
                  final_top_k: int = None,
@@ -65,8 +63,7 @@ def run_pipeline(test_path: str = None,
     image_dir = image_dir or str(IMAGES_DIR)
     dense_model = dense_model or DENSE_MODEL
     reranker_model = reranker_model or RERANKER_MODEL
-    vlm_model = vlm_model or VLM_MODEL
-    load_in_4bit = LOAD_IN_4BIT if load_in_4bit is None else load_in_4bit
+    llm_model = llm_model or LLM_MODEL
     dense_top_k = dense_top_k if dense_top_k is not None else DENSE_TOP_K
     bm25_top_k = bm25_top_k if bm25_top_k is not None else BM25_TOP_K
     final_top_k = final_top_k if final_top_k is not None else FINAL_TOP_K
@@ -95,15 +92,12 @@ def run_pipeline(test_path: str = None,
         final_top_k=final_top_k
     )
 
-    # 3. 初始化VLM生成器
+    # 3. 初始化LLM生成器
     print()
     print("=" * 50)
-    print("Step 3: 初始化VLM生成器")
+    print("Step 3: 初始化LLM生成器")
     print("=" * 50)
-    generator = VLMGenerator(
-        model_name=vlm_model,
-        load_in_4bit=load_in_4bit
-    )
+    generator = LLMGenerator(model=llm_model)
 
     # 4. 逐题检索+生成
     print()
@@ -131,7 +125,7 @@ def run_pipeline(test_path: str = None,
 
         print(f"  定位: {top_filename} 第{top_page}页")
 
-        # 生成答案
+        # 生成答案（image_path 在文本-only LLM 模式下被忽略，保留兼容）
         gen_result = generator.generate(
             question=question,
             context_text=context_text,
@@ -190,8 +184,7 @@ if __name__ == "__main__":
     parser.add_argument("--image_dir", type=str, default=None)
     parser.add_argument("--dense_model", type=str, default=None)
     parser.add_argument("--reranker_model", type=str, default=None)
-    parser.add_argument("--vlm_model", type=str, default=None)
-    parser.add_argument("--no_4bit", action="store_true", help="不使用4bit量化")
+    parser.add_argument("--llm_model", type=str, default=None)
     parser.add_argument("--dense_top_k", type=int, default=None)
     parser.add_argument("--bm25_top_k", type=int, default=None)
     parser.add_argument("--final_top_k", type=int, default=None)
@@ -207,8 +200,7 @@ if __name__ == "__main__":
         image_dir=args.image_dir,
         dense_model=args.dense_model,
         reranker_model=args.reranker_model,
-        vlm_model=args.vlm_model,
-        load_in_4bit=not args.no_4bit,
+        llm_model=args.llm_model,
         dense_top_k=args.dense_top_k,
         bm25_top_k=args.bm25_top_k,
         final_top_k=args.final_top_k,
