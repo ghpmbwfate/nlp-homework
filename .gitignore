@@ -5,7 +5,10 @@ __pycache__/
 .Python
 
 # 输出目录
-outputs/
+outputs/page_images/
+outputs/parsed_data/
+outputs/test_parse/
+outputs/test_parse2/
 
 # 数据目录中的解析结果（保留原始PDF）
 data/reports/*.md
@@ -21,4 +24,3 @@ Thumbs.db
 
 # Claude settings
 .claude/settings.local.json
-ROADMAP.md
