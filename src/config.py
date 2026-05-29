@@ -29,13 +29,14 @@ DEFAULT_OUTPUT_PATH = OUTPUTS_DIR / "submit.json"
 DEFAULT_GROUND_TRUTH_PATH = QUESTIONS_DIR / "test_ground_truth.json"
 DEFAULT_EVAL_OUTPUT_PATH = OUTPUTS_DIR / "evaluation_result.json"
 
-# LLM API 配置（OPENAI_* 用于云端答案生成，DASHSCOPE_* 用于 query rewriter）
+# LLM API 配置（OPENAI_* 用于云端答案生成，DASHSCOPE_* 用于 query rewriter + VLM 图表提取）
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
 DASHSCOPE_BASE_URL = os.environ.get(
     "DASHSCOPE_BASE_URL",
     "https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 DASHSCOPE_MODEL = os.environ.get("DASHSCOPE_MODEL", "qwen-turbo")
+DASHSCOPE_VL_MODEL = os.environ.get("DASHSCOPE_VL_MODEL", "qwen-vl-max")
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.environ.get(
