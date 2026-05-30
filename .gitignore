@@ -6,7 +6,7 @@ __pycache__/
 
 # 输出目录
 outputs/page_images/
-outputs/parsed_data/
+
 outputs/test_parse/
 outputs/test_parse2/
 

@@ -176,7 +176,7 @@ class ChartExtractor:
                         },
                     ],
                     temperature=0.0,
-                    max_tokens=4096,
+                    # max_tokens=4096,
                 )
                 raw_text = response.choices[0].message.content
                 if not raw_text:
@@ -191,12 +191,12 @@ class ChartExtractor:
                     f"  [WARNING] JSON 解析失败，保留原始响应"
                 )
                 return {
-                    "page_summary": raw_text[:200],
+                    "page_summary": "JSONDecodeError: 无法解析 VLM 响应",
                     "has_charts": False,
                     "has_tables": False,
                     "charts": [],
                     "tables": [],
-                    "_raw_response": raw_text[:2000],
+                    "_raw_response": raw_text,
                     "_parse_error": True,
                 }
 
