@@ -13,6 +13,7 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
 from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, IMAGES_DIR
+from .base import BaseRetriever
 from .multi_recover import title_search, keyword_search, summary_search
 from .reranking import multi_stage_rerank
 
@@ -148,18 +149,7 @@ def merge_and_deduplicate(dense_hits: list[dict],
     return sorted(merged.values(), key=lambda x: x["score"], reverse=True)
 
 
-def get_page_image_path(filename: str, page: int,
-                        image_dir: str = None) -> str | None:
-    """获取页面对应的图片路径（返回 file:/// URI）"""
-    image_dir = image_dir or str(IMAGES_DIR)
-    image_name = f"{filename}_page_{page}.png"
-    image_path = Path(image_dir) / image_name
-    if image_path.exists():
-        return image_path.as_uri()
-    return None
-
-
-class Retriever:
+class Retriever(BaseRetriever):
     """检索器：封装完整的检索流程（含多路召回）"""
 
     def __init__(self,
@@ -174,8 +164,8 @@ class Retriever:
                  multi_indexes: dict | None = None,
                  enable_multi_recall: bool = False,
                  enable_multi_stage_rerank: bool = False):
+        super().__init__(image_dir=image_dir)
         print("[INFO] 初始化检索器...")
-        self.image_dir = image_dir or str(IMAGES_DIR)
         self.dense_top_k = dense_top_k
         self.bm25_top_k = bm25_top_k
         self.final_top_k = final_top_k
@@ -197,7 +187,8 @@ class Retriever:
             print(f"[INFO] 多阶段重排序已启用 (RRF→CE→MMR→TypeFilter)")
         print("[INFO] 检索器初始化完成")
 
-    def search(self, query: str, question_type: str | None = None) -> list[dict]:
+    def search(self, query: str, top_k: int | None = None,
+               question_type: str | None = None, **kwargs) -> list[dict]:
         """
         完整检索流程（支持多路召回 + 多阶段重排序）
         返回: [{
@@ -232,6 +223,7 @@ class Retriever:
         )
 
         # 5. 重排序（多阶段 或 单阶段）
+        final_k = top_k if top_k is not None else self.final_top_k
         if self.enable_multi_stage_rerank:
             # 多阶段重排序: RRF→CE→MMR→TypeFilter
             top_results = multi_stage_rerank(
@@ -240,7 +232,7 @@ class Retriever:
                 question_type=question_type,
                 coarse_k=min(len(merged), 50),
                 fine_k=min(len(merged), 20),
-                final_k=self.final_top_k,
+                final_k=final_k,
             )
         elif self.reranker is not None:
             # 单阶段 CrossEncoder 重排序（兼容旧行为）
@@ -249,54 +241,21 @@ class Retriever:
             for i, c in enumerate(merged):
                 c["rerank_score"] = float(scores[i])
             merged.sort(key=lambda x: x["rerank_score"], reverse=True)
-            top_results = merged[:self.final_top_k]
+            top_results = merged[:final_k]
         else:
-            top_results = merged[:self.final_top_k]
+            top_results = merged[:final_k]
 
         # 6. 添加图片路径
         for result in top_results:
-            result["image_path"] = get_page_image_path(
-                result["filename"], result["page"], self.image_dir
+            result["image_path"] = self._get_page_image_path(
+                result["filename"], result["page"]
             )
 
         return top_results
 
-    def search_with_context(self, query: str, question_type: str | None = None) -> dict:
-        """
-        检索并组装上下文信息，供VLM使用
-        返回: {
-            "top_filename": str,
-            "top_page": int,
-            "context_text": str,  # top-k结果的拼接文本
-            "image_path": str,    # top-1结果的图片路径
-            "results": list       # 完整检索结果
-        }
-        """
-        results = self.search(query, question_type=question_type)
-        if not results:
-            return {
-                "top_filename": "",
-                "top_page": 0,
-                "context_text": "",
-                "image_path": None,
-                "results": []
-            }
-
-        # 拼接top-k的文本作为上下文
-        context_parts = []
-        for i, r in enumerate(results):
-            context_parts.append(
-                f"[来源: {r['filename']} 第{r['page']}页]\n{r['content']}"
-            )
-        context_text = "\n\n---\n\n".join(context_parts)
-
-        return {
-            "top_filename": results[0]["filename"],
-            "top_page": results[0]["page"],
-            "context_text": context_text,
-            "image_path": results[0].get("image_path"),
-            "results": results
-        }
+    def search_with_context(self, query: str, **kwargs) -> dict:
+        """检索并组装上下文信息（使用 final_top_k 作为默认检索数量）"""
+        return super().search_with_context(query, top_k=self.final_top_k, **kwargs)
 
 
 if __name__ == "__main__":

@@ -11,4 +11,7 @@ def __getattr__(name):
     if name == "MultiStageReranker":
         from .reranking import MultiStageReranker
         return MultiStageReranker
+    if name == "BaseRetriever":
+        from .base import BaseRetriever
+        return BaseRetriever
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

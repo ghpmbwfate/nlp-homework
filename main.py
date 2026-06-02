@@ -1,12 +1,15 @@
 """
 主流程：读取test.json → 检索 → LLM生成 → 输出submit.json
+
+支持 --retriever 切换检索后端:
+    python main.py --retriever vrag   # VRAG (dense + BM25 + rerank)
+    python main.py --retriever tfidf  # TF-IDF baseline
 """
 
 import json
 import argparse
 from pathlib import Path
 
-from src.retrieval import Retriever
 from src.generation import LLMGenerator
 from src.generation.citation import clean_answer_no_citations, has_citations
 from src.generation.question_classifier import classify_question
@@ -27,6 +30,30 @@ from src.config import (
 )
 
 
+def _build_retriever(retriever_type: str, **kwargs):
+    """Factory: instantiate the selected retriever backend."""
+    if retriever_type == "vrag":
+        from src.retrieval import Retriever
+        return Retriever(
+            chroma_dir=kwargs.get("chroma_dir"),
+            bm25_dir=kwargs.get("bm25_dir"),
+            image_dir=kwargs.get("image_dir"),
+            dense_model=kwargs.get("dense_model", DENSE_MODEL),
+            reranker_model=kwargs.get("reranker_model", RERANKER_MODEL),
+            dense_top_k=kwargs.get("dense_top_k", DENSE_TOP_K),
+            bm25_top_k=kwargs.get("bm25_top_k", BM25_TOP_K),
+            final_top_k=kwargs.get("final_top_k", FINAL_TOP_K),
+        )
+    elif retriever_type == "tfidf":
+        from src.baseline.tfidf import TFIDFRetriever
+        return TFIDFRetriever(
+            page_content_path=kwargs.get("page_content", "page_content.json"),
+            image_dir=kwargs.get("image_dir"),
+        )
+    else:
+        raise ValueError(f"Unknown retriever type: {retriever_type}")
+
+
 def load_test_data(test_path: str) -> list[dict]:
     """加载测试集"""
     with open(test_path, "r", encoding="utf-8") as f:
@@ -43,6 +70,8 @@ def load_test_data(test_path: str) -> list[dict]:
 
 def run_pipeline(test_path: str = None,
                  output_path: str = None,
+                 retriever_type: str = "vrag",
+                 page_content: str = "page_content.json",
                  chroma_dir: str = None,
                  bm25_dir: str = None,
                  image_dir: str = None,
@@ -79,17 +108,19 @@ def run_pipeline(test_path: str = None,
     # 2. 初始化检索器
     print()
     print("=" * 50)
-    print("Step 2: 初始化检索器")
+    print(f"Step 2: 初始化检索器 ({retriever_type})")
     print("=" * 50)
-    retriever = Retriever(
+    retriever = _build_retriever(
+        retriever_type,
         chroma_dir=chroma_dir,
         bm25_dir=bm25_dir,
         image_dir=image_dir,
+        page_content=page_content,
         dense_model=dense_model,
         reranker_model=reranker_model,
         dense_top_k=dense_top_k,
         bm25_top_k=bm25_top_k,
-        final_top_k=final_top_k
+        final_top_k=final_top_k,
     )
 
     # 3. 初始化LLM生成器
@@ -179,6 +210,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="财报RAG问答系统 - 主流程")
     parser.add_argument("--test", type=str, default=None, help="测试集路径")
     parser.add_argument("--output", type=str, default=None, help="输出路径")
+    parser.add_argument("--retriever", type=str, default="vrag",
+                        choices=["vrag", "tfidf"], help="检索后端 (default: vrag)")
+    parser.add_argument("--page_content", type=str, default="page_content.json",
+                        help="page_content.json 路径 (TF-IDF baseline 使用)")
     parser.add_argument("--chroma_dir", type=str, default=None)
     parser.add_argument("--bm25_dir", type=str, default=None)
     parser.add_argument("--image_dir", type=str, default=None)
@@ -195,6 +230,8 @@ if __name__ == "__main__":
     run_pipeline(
         test_path=args.test,
         output_path=args.output,
+        retriever_type=args.retriever,
+        page_content=args.page_content,
         chroma_dir=args.chroma_dir,
         bm25_dir=args.bm25_dir,
         image_dir=args.image_dir,
