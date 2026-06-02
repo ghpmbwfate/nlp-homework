@@ -12,7 +12,7 @@ from chromadb.utils import embedding_functions
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
-from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, IMAGES_DIR
+from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, IMAGES_DIR, _resolve_model_path
 from .base import BaseRetriever
 from .multi_recover import title_search, keyword_search, summary_search
 from .reranking import multi_stage_rerank
@@ -21,9 +21,15 @@ from .reranking import multi_stage_rerank
 def load_dense_index(chroma_dir: str = None,
                      model_name: str = "BAAI/bge-m3"):
     """加载ChromaDB稠密索引"""
+    import torch
+
     chroma_dir = chroma_dir or str(INDEX_CHROMA_DIR)
+    effective_model = _resolve_model_path("Xorbits/bge-m3")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"[INFO] 加载embedding模型: {effective_model} (device={device})")
     embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=model_name
+        model_name=effective_model,
+        device=device,
     )
     client = chromadb.PersistentClient(path=chroma_dir)
     collection = client.get_collection(
@@ -178,8 +184,11 @@ class Retriever(BaseRetriever):
         self.bm25, self.chunks = load_bm25_index(bm25_dir)
 
         # 加载reranker
-        print(f"[INFO] 加载reranker: {reranker_model}")
-        self.reranker = CrossEncoder(reranker_model)
+        import torch
+        effective_reranker = _resolve_model_path("Xorbits/bge-reranker-large")
+        reranker_device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"[INFO] 加载reranker: {effective_reranker} (device={reranker_device})")
+        self.reranker = CrossEncoder(effective_reranker, device=reranker_device)
 
         if enable_multi_recall and multi_indexes:
             print(f"[INFO] 多路召回已启用 (title, keyword, summary)")

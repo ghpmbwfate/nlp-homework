@@ -1,7 +1,7 @@
 """
 分块与索引构建模块
-- 按页分块 + 表格单独分块
-- 语义分块 + 滑动窗口（可选）
+- 直接从 outputs/parsed_data/*/chart_descriptions.json 加载 VLM 提取的结构化数据
+- 按页生成文本/图表/表格 chunk
 - 稠密索引（ChromaDB + bge-m3）+ 稀疏索引（BM25 + jieba）
 """
 
@@ -14,67 +14,59 @@ import chromadb
 from chromadb.utils import embedding_functions
 from rank_bm25 import BM25Okapi
 
-from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR
+from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, PARSED_DIR, _resolve_model_path
 
 
-def load_page_content(page_content_path: str = "page_content.json") -> list[dict]:
-    """加载页面内容索引"""
-    path = Path(page_content_path)
-    if not path.exists():
-        raise FileNotFoundError(f"页面内容文件不存在: {page_content_path}，请先运行pdf_parser.py")
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+def load_parsed_data(parsed_dir: str = None) -> list[dict]:
+    """从 outputs/parsed_data/*/chart_descriptions.json 加载所有页面数据"""
+    parsed_path = Path(parsed_dir) if parsed_dir else PARSED_DIR
+    if not parsed_path.exists():
+        raise FileNotFoundError(
+            f"解析数据目录不存在: {parsed_path}，请先运行 chart_extractor.py"
+        )
+    pages = []
+    for cd_file in sorted(parsed_path.glob("*/chart_descriptions.json")):
+        with open(cd_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        pages.extend(data)
+    return pages
 
 
 def create_chunks(pages: list[dict]) -> list[dict]:
     """
-    将页面内容拆分为chunk
-    每页文本作为一个chunk，表格单独作为chunk
+    将 VLM 提取的页面数据拆分为 chunk
+    - 每页文本作为一个 chunk（拼接 text 列表中的 content）
+    - 每个图表单独一个 chunk
+    - 每个 VLM 表格单独一个 chunk
     """
     chunks = []
-    chunk_id = 0
 
     for page in pages:
-        filename = page["filename"]
-        page_num = page["page"]
-        text = page.get("text", "")
-        tables = page.get("tables", [])
+        filename = page.get("filename", "")
+        page_num = page.get("page", 0)
+        page_summary = page.get("page_summary", "")
 
-        # 文本chunk（去除表格部分后的文本）
-        text_only = text
-        for table in tables:
-            text_only = text_only.replace(table, "")
-        text_only = text_only.strip()
+        # 文本chunk：拼接所有 text 段落的 content
+        text_parts = page.get("text", [])
+        text_content = " ".join(
+            t.get("content", "") for t in text_parts if t.get("content")
+        ).strip()
 
-        if text_only and len(text_only) > 10:  # 过滤太短的文本
+        if text_content and len(text_content) > 10:
+            # 如果有页面摘要，拼接到文本前面
+            if page_summary:
+                text_content = f"[页面摘要] {page_summary}\n{text_content}"
             chunks.append({
                 "chunk_id": f"{filename}_p{page_num}_text",
                 "filename": filename,
                 "page": page_num,
                 "type": "text",
-                "content": text_only
+                "content": text_content,
             })
-            chunk_id += 1
 
-        # 表格chunk
-        for i, table in enumerate(tables):
-            if table.strip():
-                chunks.append({
-                    "chunk_id": f"{filename}_p{page_num}_table{i}",
-                    "filename": filename,
-                    "page": page_num,
-                    "type": "table",
-                    "content": table.strip()
-                })
-                chunk_id += 1
-
-        # 图表描述chunks (from VLM-extracted chart_descriptions)
-        chart_desc = page.get("chart_descriptions") or {}
-        page_summary = chart_desc.get("page_summary", "")
-
-        # 每个图表一个chunk
-        if chart_desc.get("has_charts"):
-            for ci, chart in enumerate(chart_desc.get("charts", [])):
+        # 图表chunk
+        if page.get("has_charts"):
+            for ci, chart in enumerate(page.get("charts", [])):
                 content = _format_chart_content(chart, page_summary)
                 if content.strip():
                     chunks.append({
@@ -84,11 +76,10 @@ def create_chunks(pages: list[dict]) -> list[dict]:
                         "type": "chart",
                         "content": content.strip(),
                     })
-                    chunk_id += 1
 
-        # 每个VLM表格一个chunk
-        if chart_desc.get("has_tables"):
-            for ti, table in enumerate(chart_desc.get("tables", [])):
+        # VLM表格chunk
+        if page.get("has_tables"):
+            for ti, table in enumerate(page.get("tables", [])):
                 content = _format_chart_table_content(table, page_summary)
                 if content.strip():
                     chunks.append({
@@ -98,7 +89,6 @@ def create_chunks(pages: list[dict]) -> list[dict]:
                         "type": "chart_table",
                         "content": content.strip(),
                     })
-                    chunk_id += 1
 
     print(f"[INFO] 共创建 {len(chunks)} 个chunk")
     return chunks
@@ -155,14 +145,17 @@ def build_dense_index(chunks: list[dict],
                       model_name: str = "BAAI/bge-m3",
                       persist_dir: str = None):
     """构建稠密向量索引（ChromaDB）"""
+    import torch
+
     persist_path = Path(persist_dir) if persist_dir else INDEX_CHROMA_DIR
     persist_path.mkdir(parents=True, exist_ok=True)
 
-    # 使用sentence-transformers的embedding
-    # bge-m3支持多语言，对中文财报效果好
-    print(f"[INFO] 加载embedding模型: {model_name}")
+    effective_model = _resolve_model_path("Xorbits/bge-m3")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"[INFO] 加载embedding模型: {effective_model} (device={device})")
     embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=model_name
+        model_name=effective_model,
+        device=device,
     )
 
     client = chromadb.PersistentClient(path=str(persist_path))
@@ -174,7 +167,8 @@ def build_dense_index(chunks: list[dict],
 
     # 批量插入
     batch_size = 100
-    for i in range(0, len(chunks), batch_size):
+    total_batches = (len(chunks) + batch_size - 1) // batch_size
+    for batch_idx, i in enumerate(range(0, len(chunks), batch_size)):
         batch = chunks[i:i + batch_size]
         ids = [c["chunk_id"] for c in batch]
         documents = [c["content"] for c in batch]
@@ -192,8 +186,9 @@ def build_dense_index(chunks: list[dict],
             documents=documents,
             metadatas=metadatas
         )
+        print(f"\r[INFO] 稠密索引构建进度: {batch_idx + 1}/{total_batches} 批次", end="", flush=True)
 
-    print(f"[INFO] 稠密索引构建完成: {len(chunks)} 个chunk, 存储于 {persist_path}")
+    print(f"\n[INFO] 稠密索引构建完成: {len(chunks)} 个chunk, 存储于 {persist_path}")
     return collection
 
 
@@ -236,35 +231,22 @@ def build_bm25_index(chunks: list[dict],
     return bm25, chunk_meta
 
 
-def build_all_indexes(page_content_path: str = "page_content.json",
+def build_all_indexes(parsed_dir: str = None,
                       dense_model: str = "BAAI/bge-m3",
                       chroma_dir: str = None,
-                      bm25_dir: str = None,
-                      use_semantic_chunking: bool = False,
-                      semantic_chunk_size: int = 500,
-                      semantic_overlap: int = 100):
+                      bm25_dir: str = None):
     """构建所有索引"""
     print("=" * 50)
-    print("Step 1: 加载页面内容")
+    print("Step 1: 加载解析数据")
     print("=" * 50)
-    pages = load_page_content(page_content_path)
+    pages = load_parsed_data(parsed_dir)
     print(f"[INFO] 加载了 {len(pages)} 页内容")
 
     print()
     print("=" * 50)
     print("Step 2: 创建chunk")
     print("=" * 50)
-    if use_semantic_chunking:
-        from .chunking import semantic_chunking
-        print(f"[INFO] 使用语义分块 (chunk_size={semantic_chunk_size}, overlap={semantic_overlap})")
-        chunks = semantic_chunking(
-            pages,
-            chunk_size=semantic_chunk_size,
-            overlap=semantic_overlap,
-            model_name=dense_model
-        )
-    else:
-        chunks = create_chunks(pages)
+    chunks = create_chunks(pages)
 
     print()
     print("=" * 50)
@@ -286,14 +268,15 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="索引构建工具")
-    parser.add_argument("--page_content", type=str, default="page_content.json")
+    parser.add_argument("--parsed_dir", type=str, default=None,
+                        help="解析数据目录 (默认 outputs/parsed_data)")
     parser.add_argument("--dense_model", type=str, default="BAAI/bge-m3")
     parser.add_argument("--chroma_dir", type=str, default=None)
     parser.add_argument("--bm25_dir", type=str, default=None)
 
     args = parser.parse_args()
     build_all_indexes(
-        page_content_path=args.page_content,
+        parsed_dir=args.parsed_dir,
         dense_model=args.dense_model,
         chroma_dir=args.chroma_dir,
         bm25_dir=args.bm25_dir

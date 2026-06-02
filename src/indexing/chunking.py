@@ -9,6 +9,8 @@ import re
 import numpy as np
 from typing import List, Dict, Optional
 
+from src.config import _resolve_model_path
+
 
 def split_sentences(text: str) -> List[str]:
     """Split Chinese text into sentences by sentence-ending punctuation."""
@@ -82,8 +84,11 @@ def semantic_chunking(pages: List[Dict],
     model = None
     if model_name:
         try:
+            import torch
             from sentence_transformers import SentenceTransformer
-            model = SentenceTransformer(model_name)
+            effective_model = _resolve_model_path("Xorbits/bge-m3")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model = SentenceTransformer(effective_model, device=device)
         except Exception:
             pass  # Fall back to jieba similarity
 

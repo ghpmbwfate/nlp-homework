@@ -44,6 +44,18 @@ OPENAI_BASE_URL = os.environ.get(
 )
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "GPT-OSS-20B-BF16")
 
+# 模型缓存（使用 ModelScope 下载和管理）
+MODEL_CACHE_DIR = str(PROJECT_ROOT / ".cache" / "modelscope")
+DENSE_MODEL_MS_ID = "Xorbits/bge-m3"  # ModelScope 模型 ID
+RERANKER_MODEL_MS_ID = "Xorbits/bge-reranker-large"  # ModelScope 模型 ID
+
+
+def _resolve_model_path(ms_model_id: str) -> str:
+    """通过 ModelScope snapshot_download 解析本地模型路径，未下载则自动下载"""
+    from modelscope import snapshot_download
+    return snapshot_download(ms_model_id, cache_dir=MODEL_CACHE_DIR)
+
+
 # 模型配置
 DENSE_MODEL = "BAAI/bge-m3"
 RERANKER_MODEL = "BAAI/bge-reranker-large"
