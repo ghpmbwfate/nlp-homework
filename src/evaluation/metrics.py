@@ -2,14 +2,18 @@
 评估指标模块：对比预测结果与标准答案，计算多项指标
 
 支持指标：
+- Accuracy (准确率，等同于 Exact Match)
 - Exact Match (精确匹配率)
 - Char F1 (字符级 F1)
 - Word F1 (词级 F1，基于 jieba 分词)
+- ROUGE-1 / ROUGE-2 (词级 n-gram 召回)
 - ROUGE-L (基于最长公共子序列)
+- BLEU-4 (n-gram 精度 + 短句惩罚)
 - Number Accuracy (数字提取准确率，针对财报场景)
 """
 
 import json
+import math
 import re
 import string
 from collections import Counter
@@ -117,6 +121,77 @@ def rouge_l(pred: str, gold: str) -> Tuple[float, float, float]:
     return precision, recall, f1
 
 
+def _tokenize(text: str) -> List[str]:
+    """jieba 分词，过滤纯标点 token"""
+    return [w for w in jieba.lcut(text) if w.strip() and not re.match(r"^\W+$", w)]
+
+
+def _get_ngrams(tokens: List[str], n: int) -> Counter:
+    """提取 n-gram 并计数"""
+    return Counter(tuple(tokens[i:i + n]) for i in range(len(tokens) - n + 1))
+
+
+def rouge_n(pred: str, gold: str, n: int = 1) -> Tuple[float, float, float]:
+    """ROUGE-N：基于 n-gram 重叠"""
+    pred_tokens = _tokenize(pred)
+    gold_tokens = _tokenize(gold)
+
+    pred_ngrams = _get_ngrams(pred_tokens, n)
+    gold_ngrams = _get_ngrams(gold_tokens, n)
+
+    if not pred_ngrams and not gold_ngrams:
+        return 1.0, 1.0, 1.0
+    if not pred_ngrams or not gold_ngrams:
+        return 0.0, 0.0, 0.0
+
+    common = sum((pred_ngrams & gold_ngrams).values())
+    precision = common / sum(pred_ngrams.values())
+    recall = common / sum(gold_ngrams.values())
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    return precision, recall, f1
+
+
+def rouge_1(pred: str, gold: str) -> Tuple[float, float, float]:
+    """ROUGE-1：unigram 重叠"""
+    return rouge_n(pred, gold, n=1)
+
+
+def rouge_2(pred: str, gold: str) -> Tuple[float, float, float]:
+    """ROUGE-2：bigram 重叠"""
+    return rouge_n(pred, gold, n=2)
+
+
+def bleu(pred: str, gold: str, max_n: int = 4) -> float:
+    """BLEU：n-gram 精度几何平均 + 短句惩罚"""
+    pred_tokens = _tokenize(pred)
+    gold_tokens = _tokenize(gold)
+
+    if not pred_tokens or not gold_tokens:
+        return 0.0
+
+    # Brevity penalty
+    bp = math.exp(1 - len(gold_tokens) / len(pred_tokens)) if len(pred_tokens) < len(gold_tokens) else 1.0
+
+    # 各阶 n-gram 精度
+    precisions = []
+    for n in range(1, max_n + 1):
+        pred_ngrams = _get_ngrams(pred_tokens, n)
+        gold_ngrams = _get_ngrams(gold_tokens, n)
+        if not pred_ngrams:
+            precisions.append(0.0)
+            continue
+        clipped = sum((pred_ngrams & gold_ngrams).values())
+        total = sum(pred_ngrams.values())
+        precisions.append(clipped / total if total > 0 else 0.0)
+
+    # 若任一阶精度为 0，整体为 0
+    if any(p == 0.0 for p in precisions):
+        return 0.0
+
+    log_avg = sum(math.log(p) for p in precisions) / max_n
+    return bp * math.exp(log_avg)
+
+
 def number_accuracy(pred: str, gold: str) -> float:
     """
     数字提取准确率。
@@ -154,7 +229,9 @@ def evaluate(pred_data: List[dict], gold_data: List[dict]) -> Dict:
             gold_map[q] = item
 
     results = []
-    total = {"exact_match": 0, "char_f1": 0.0, "word_f1": 0.0, "rouge_l_f1": 0.0, "number_f1": 0.0}
+    total = {"exact_match": 0, "char_f1": 0.0, "word_f1": 0.0,
+             "rouge_1_f1": 0.0, "rouge_2_f1": 0.0, "rouge_l_f1": 0.0,
+             "bleu": 0.0, "number_f1": 0.0}
 
     for pred_item in pred_data:
         pred_q = pred_item.get("question", "").strip()
@@ -177,13 +254,19 @@ def evaluate(pred_data: List[dict], gold_data: List[dict]) -> Dict:
         em = 1.0 if pred_norm == gold_norm else 0.0
         _, _, c_f1 = char_f1(pred_norm, gold_norm)
         _, _, w_f1 = word_f1(pred_norm, gold_norm)
-        _, _, r_f1 = rouge_l(pred_norm, gold_norm)
+        _, _, r1_f1 = rouge_1(pred_norm, gold_norm)
+        _, _, r2_f1 = rouge_2(pred_norm, gold_norm)
+        _, _, rl_f1 = rouge_l(pred_norm, gold_norm)
+        b_score = bleu(pred_norm, gold_norm)
         n_f1 = number_accuracy(pred_ans, gold_ans)
 
         total["exact_match"] += em
         total["char_f1"] += c_f1
         total["word_f1"] += w_f1
-        total["rouge_l_f1"] += r_f1
+        total["rouge_1_f1"] += r1_f1
+        total["rouge_2_f1"] += r2_f1
+        total["rouge_l_f1"] += rl_f1
+        total["bleu"] += b_score
         total["number_f1"] += n_f1
 
         results.append({
@@ -193,7 +276,10 @@ def evaluate(pred_data: List[dict], gold_data: List[dict]) -> Dict:
             "exact_match": em,
             "char_f1": c_f1,
             "word_f1": w_f1,
-            "rouge_l_f1": r_f1,
+            "rouge_1_f1": r1_f1,
+            "rouge_2_f1": r2_f1,
+            "rouge_l_f1": rl_f1,
+            "bleu": b_score,
             "number_f1": n_f1
         })
 
@@ -204,10 +290,14 @@ def evaluate(pred_data: List[dict], gold_data: List[dict]) -> Dict:
 
     metrics = {
         "count": n,
+        "accuracy": total["exact_match"] / n,
         "exact_match": total["exact_match"] / n,
         "char_f1": total["char_f1"] / n,
         "word_f1": total["word_f1"] / n,
+        "rouge_1_f1": total["rouge_1_f1"] / n,
+        "rouge_2_f1": total["rouge_2_f1"] / n,
         "rouge_l_f1": total["rouge_l_f1"] / n,
+        "bleu": total["bleu"] / n,
         "number_f1": total["number_f1"] / n,
         "details": results
     }
@@ -222,10 +312,14 @@ def print_report(metrics: Dict, output_path: str = None):
     print("=" * 60)
     print(f"样本数量: {metrics['count']}")
     print("-" * 60)
+    print(f"准确率 (Accuracy):            {metrics['accuracy']:.4f}")
     print(f"精确匹配率 (Exact Match):     {metrics['exact_match']:.4f}")
     print(f"字符级 F1 (Char F1):          {metrics['char_f1']:.4f}")
     print(f"词级 F1 (Word F1):            {metrics['word_f1']:.4f}")
+    print(f"ROUGE-1 F1:                   {metrics['rouge_1_f1']:.4f}")
+    print(f"ROUGE-2 F1:                   {metrics['rouge_2_f1']:.4f}")
     print(f"ROUGE-L F1:                   {metrics['rouge_l_f1']:.4f}")
+    print(f"BLEU-4:                       {metrics['bleu']:.4f}")
     print(f"数字提取 F1 (Number F1):      {metrics['number_f1']:.4f}")
     print("=" * 60)
 
