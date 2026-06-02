@@ -1,5 +1,6 @@
 """Tests for error_analysis module."""
 
+import logging
 import pytest
 
 from src.evaluation.error_analysis import analyze_errors, print_error_report
@@ -89,7 +90,7 @@ class TestAnalyzeErrors:
 
 
 class TestPrintErrorReport:
-    def test_prints_without_error(self, capsys):
+    def test_prints_without_error(self, caplog):
         analysis = {
             "total_questions": 2,
             "total_errors": 1,
@@ -101,6 +102,6 @@ class TestPrintErrorReport:
             },
             "bad_cases": [{"question": "q1"}],
         }
-        print_error_report(analysis)
-        captured = capsys.readouterr()
-        assert "错误率" in captured.out
+        with caplog.at_level(logging.INFO, logger="src.evaluation.error_analysis"):
+            print_error_report(analysis)
+        assert "错误率" in caplog.text

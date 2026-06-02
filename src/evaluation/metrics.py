@@ -13,6 +13,7 @@
 """
 
 import json
+import logging
 import math
 import re
 import string
@@ -21,6 +22,8 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 
 import jieba
+
+logger = logging.getLogger(__name__)
 
 # 需要去除的中英文标点
 _PUNCTUATION = string.punctuation + "，。？！；：\"\"''（）【】《》、"
@@ -239,7 +242,7 @@ def evaluate(pred_data: List[dict], gold_data: List[dict]) -> Dict:
 
         # 必须按 question 精确匹配
         if not pred_q or pred_q not in gold_map:
-            print(f"[WARN] 未匹配到问题，已跳过: {pred_q[:60]}...")
+            logger.warning(f"未匹配到问题，已跳过: {pred_q[:60]}...")
             continue
 
         gold_item = gold_map[pred_q]
@@ -285,7 +288,7 @@ def evaluate(pred_data: List[dict], gold_data: List[dict]) -> Dict:
 
     n = len(results)
     if n == 0:
-        print("[ERROR] 没有匹配到任何样本，请检查输入文件格式")
+        logger.error("没有匹配到任何样本，请检查输入文件格式")
         return {}
 
     metrics = {
@@ -307,40 +310,40 @@ def evaluate(pred_data: List[dict], gold_data: List[dict]) -> Dict:
 
 def print_report(metrics: Dict, output_path: str = None):
     """打印评估报告"""
-    print("\n" + "=" * 60)
-    print("评估报告")
-    print("=" * 60)
-    print(f"样本数量: {metrics['count']}")
-    print("-" * 60)
-    print(f"准确率 (Accuracy):            {metrics['accuracy']:.4f}")
-    print(f"精确匹配率 (Exact Match):     {metrics['exact_match']:.4f}")
-    print(f"字符级 F1 (Char F1):          {metrics['char_f1']:.4f}")
-    print(f"词级 F1 (Word F1):            {metrics['word_f1']:.4f}")
-    print(f"ROUGE-1 F1:                   {metrics['rouge_1_f1']:.4f}")
-    print(f"ROUGE-2 F1:                   {metrics['rouge_2_f1']:.4f}")
-    print(f"ROUGE-L F1:                   {metrics['rouge_l_f1']:.4f}")
-    print(f"BLEU-4:                       {metrics['bleu']:.4f}")
-    print(f"数字提取 F1 (Number F1):      {metrics['number_f1']:.4f}")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("评估报告")
+    logger.info("=" * 60)
+    logger.info(f"样本数量: {metrics['count']}")
+    logger.info("-" * 60)
+    logger.info(f"准确率 (Accuracy):            {metrics['accuracy']:.4f}")
+    logger.info(f"精确匹配率 (Exact Match):     {metrics['exact_match']:.4f}")
+    logger.info(f"字符级 F1 (Char F1):          {metrics['char_f1']:.4f}")
+    logger.info(f"词级 F1 (Word F1):            {metrics['word_f1']:.4f}")
+    logger.info(f"ROUGE-1 F1:                   {metrics['rouge_1_f1']:.4f}")
+    logger.info(f"ROUGE-2 F1:                   {metrics['rouge_2_f1']:.4f}")
+    logger.info(f"ROUGE-L F1:                   {metrics['rouge_l_f1']:.4f}")
+    logger.info(f"BLEU-4:                       {metrics['bleu']:.4f}")
+    logger.info(f"数字提取 F1 (Number F1):      {metrics['number_f1']:.4f}")
+    logger.info("=" * 60)
 
     # 找出表现最好和最差的样本
     details = metrics["details"]
     best = max(details, key=lambda x: x["rouge_l_f1"])
     worst = min(details, key=lambda x: x["rouge_l_f1"])
 
-    print("\n【ROUGE-L 最高样本】")
-    print(f"问题: {best['question'][:80]}...")
-    print(f"预测: {best['predicted'][:100]}...")
-    print(f"参考: {best['gold'][:100]}...")
-    print(f"分数: EM={best['exact_match']:.2f}, ROUGE-L={best['rouge_l_f1']:.4f}")
+    logger.info("\n【ROUGE-L 最高样本】")
+    logger.info(f"问题: {best['question'][:80]}...")
+    logger.info(f"预测: {best['predicted'][:100]}...")
+    logger.info(f"参考: {best['gold'][:100]}...")
+    logger.info(f"分数: EM={best['exact_match']:.2f}, ROUGE-L={best['rouge_l_f1']:.4f}")
 
-    print("\n【ROUGE-L 最低样本】")
-    print(f"问题: {worst['question'][:80]}...")
-    print(f"预测: {worst['predicted'][:100]}...")
-    print(f"参考: {worst['gold'][:100]}...")
-    print(f"分数: EM={worst['exact_match']:.2f}, ROUGE-L={worst['rouge_l_f1']:.4f}")
+    logger.info("\n【ROUGE-L 最低样本】")
+    logger.info(f"问题: {worst['question'][:80]}...")
+    logger.info(f"预测: {worst['predicted'][:100]}...")
+    logger.info(f"参考: {worst['gold'][:100]}...")
+    logger.info(f"分数: EM={worst['exact_match']:.2f}, ROUGE-L={worst['rouge_l_f1']:.4f}")
 
     if output_path:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(metrics, f, ensure_ascii=False, indent=2)
-        print(f"\n[INFO] 详细结果已保存至 {output_path}")
+        logger.info(f"详细结果已保存至 {output_path}")

@@ -7,9 +7,12 @@ Provides:
 """
 
 import json
+import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import List, Dict
+
+logger = logging.getLogger(__name__)
 
 
 def analyze_errors(
@@ -95,42 +98,42 @@ def analyze_errors(
 
 def print_error_report(analysis: Dict, output_path: str = None):
     """Print error analysis report."""
-    print("\n" + "=" * 60)
-    print("错误分析报告")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("错误分析报告")
+    logger.info("=" * 60)
     total = analysis["total_questions"]
     errors = analysis["total_errors"]
-    print(f"总问题数: {total}")
-    print(f"错误数:   {errors}")
-    print(f"错误率:   {errors / total:.2%}" if total > 0 else "错误率:   N/A")
+    logger.info(f"总问题数: {total}")
+    logger.info(f"错误数:   {errors}")
+    logger.info(f"错误率:   {errors / total:.2%}" if total > 0 else "错误率:   N/A")
 
-    print("\n【按问题类型统计】")
+    logger.info("\n【按问题类型统计】")
     for qtype, stats in sorted(
         analysis["by_question_type"].items(),
         key=lambda x: x[1]["error_rate"],
         reverse=True,
     ):
-        print(
+        logger.info(
             f"  {qtype:20s} 错误率: {stats['error_rate']:.2%} "
             f"({stats['errors']}/{stats['total']})"
         )
 
-    print("\n【按文档统计】")
+    logger.info("\n【按文档统计】")
     for doc, stats in sorted(
         analysis["by_document"].items(),
         key=lambda x: x[1]["error_rate"],
         reverse=True,
     ):
-        print(
+        logger.info(
             f"  {doc:40s} 错误率: {stats['error_rate']:.2%} "
             f"({stats['errors']}/{stats['total']})"
         )
 
-    print(f"\n【Bad Case 数量】{len(analysis['bad_cases'])}")
-    print("=" * 60)
+    logger.info(f"\n【Bad Case 数量】{len(analysis['bad_cases'])}")
+    logger.info("=" * 60)
 
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(analysis, f, ensure_ascii=False, indent=2)
-        print(f"[INFO] 详细分析已保存至 {output_path}")
+        logger.info(f"详细分析已保存至 {output_path}")

@@ -7,6 +7,7 @@ with the main RAG pipeline and evaluation tools.
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -16,6 +17,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 from src.retrieval.base import BaseRetriever
+
+logger = logging.getLogger(__name__)
 
 
 class TFIDFRetriever(BaseRetriever):
@@ -31,7 +34,7 @@ class TFIDFRetriever(BaseRetriever):
 
         with open(path, "r", encoding="utf-8") as f:
             self._pages: List[dict] = json.load(f)
-        print(f"[TF-IDF] Loaded {len(self._pages)} pages from {page_content_path}")
+        logger.info(f"[TF-IDF] Loaded {len(self._pages)} pages from {page_content_path}")
 
         self._docs = [p.get("text", "") for p in self._pages]
 
@@ -44,7 +47,7 @@ class TFIDFRetriever(BaseRetriever):
             lowercase=False,
         )
         self._tfidf_matrix = self._vectorizer.fit_transform(self._docs)
-        print(f"[TF-IDF] Built index: {self._tfidf_matrix.shape[1]} features")
+        logger.info(f"[TF-IDF] Built index: {self._tfidf_matrix.shape[1]} features")
 
     # ------------------------------------------------------------------
     # BaseRetriever interface
@@ -100,7 +103,7 @@ if __name__ == "__main__":
         {"question": item["question"], "filename": item["filename"], "page": item["page"]}
         for item in gold_items
     ]
-    print(f"[INFO] Loaded {len(questions)} ground-truth questions")
+    logger.info(f"Loaded {len(questions)} ground-truth questions")
 
     retriever = TFIDFRetriever(page_content_path=args.page_content)
     result = evaluate_retrieval(questions, retriever, top_ks=[1, 3, 5, 10])

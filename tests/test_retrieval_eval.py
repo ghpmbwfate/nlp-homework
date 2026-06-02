@@ -1,5 +1,6 @@
 """Tests for retrieval_eval module."""
 
+import logging
 import pytest
 
 from src.evaluation.retrieval_eval import evaluate_retrieval, print_retrieval_report
@@ -68,7 +69,7 @@ class TestEvaluateRetrieval:
 
 
 class TestPrintRetrievalReport:
-    def test_prints_without_error(self, capsys):
+    def test_prints_without_error(self, caplog):
         eval_result = {
             "count": 1,
             "metrics": {
@@ -78,6 +79,6 @@ class TestPrintRetrievalReport:
             },
             "details": [],
         }
-        print_retrieval_report(eval_result)
-        captured = capsys.readouterr()
-        assert "MRR" in captured.out
+        with caplog.at_level(logging.INFO, logger="src.evaluation.retrieval_eval"):
+            print_retrieval_report(eval_result)
+        assert "MRR" in caplog.text

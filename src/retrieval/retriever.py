@@ -2,7 +2,9 @@
 检索模块：稠密+BM25多路召回 → cross-encoder重排序 → 返回top-k结果
 """
 
+import io
 import json
+import logging
 import pickle
 from pathlib import Path
 
@@ -17,6 +19,8 @@ from .base import BaseRetriever
 from .multi_recover import title_search, keyword_search, summary_search
 from .reranking import multi_stage_rerank
 
+logger = logging.getLogger(__name__)
+
 
 def load_dense_index(chroma_dir: str = None,
                      model_name: str = "BAAI/bge-m3"):
@@ -26,7 +30,7 @@ def load_dense_index(chroma_dir: str = None,
     chroma_dir = chroma_dir or str(INDEX_CHROMA_DIR)
     effective_model = _resolve_model_path("Xorbits/bge-m3")
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"[INFO] 加载embedding模型: {effective_model} (device={device})")
+    logger.info(f"加载embedding模型: {effective_model} (device={device})")
     embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name=effective_model,
         device=device,
@@ -39,12 +43,28 @@ def load_dense_index(chroma_dir: str = None,
     return collection
 
 
+class _SafeUnpickler(pickle.Unpickler):
+    """Restrict pickle to only allow safe built-in types."""
+
+    ALLOWED_CLASSES = {
+        ("rank_bm25", "BM25Okapi"),
+        ("collections", "Counter"),
+    }
+
+    def find_class(self, module, name):
+        if (module, name) in self.ALLOWED_CLASSES:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(
+            f"Blocked unsafe pickle class: {module}.{name}"
+        )
+
+
 def load_bm25_index(bm25_dir: str = None):
     """加载BM25索引和chunk元数据"""
     bm25_path = Path(bm25_dir) if bm25_dir else INDEX_BM25_DIR
 
     with open(bm25_path / "bm25.pkl", "rb") as f:
-        bm25 = pickle.load(f)
+        bm25 = _SafeUnpickler(f).load()
 
     with open(bm25_path / "chunks.json", "r", encoding="utf-8") as f:
         chunks = json.load(f)
@@ -171,7 +191,7 @@ class Retriever(BaseRetriever):
                  enable_multi_recall: bool = False,
                  enable_multi_stage_rerank: bool = False):
         super().__init__(image_dir=image_dir)
-        print("[INFO] 初始化检索器...")
+        logger.info("初始化检索器...")
         self.dense_top_k = dense_top_k
         self.bm25_top_k = bm25_top_k
         self.final_top_k = final_top_k
@@ -187,14 +207,14 @@ class Retriever(BaseRetriever):
         import torch
         effective_reranker = _resolve_model_path("Xorbits/bge-reranker-large")
         reranker_device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"[INFO] 加载reranker: {effective_reranker} (device={reranker_device})")
+        logger.info(f"加载reranker: {effective_reranker} (device={reranker_device})")
         self.reranker = CrossEncoder(effective_reranker, device=reranker_device)
 
         if enable_multi_recall and multi_indexes:
-            print(f"[INFO] 多路召回已启用 (title, keyword, summary)")
+            logger.info("多路召回已启用 (title, keyword, summary)")
         if enable_multi_stage_rerank:
-            print(f"[INFO] 多阶段重排序已启用 (RRF→CE→MMR→TypeFilter)")
-        print("[INFO] 检索器初始化完成")
+            logger.info("多阶段重排序已启用 (RRF→CE→MMR→TypeFilter)")
+        logger.info("检索器初始化完成")
 
     def search(self, query: str, top_k: int | None = None,
                question_type: str | None = None, **kwargs) -> list[dict]:
@@ -287,9 +307,9 @@ if __name__ == "__main__":
     )
 
     result = retriever.search_with_context(args.query)
-    print(f"\n{'='*50}")
-    print(f"查询: {args.query}")
-    print(f"定位: {result['top_filename']} 第{result['top_page']}页")
-    print(f"图片: {result['image_path']}")
-    print(f"{'='*50}")
-    print(f"上下文:\n{result['context_text'][:500]}...")
+    logger.info(f"{'='*50}")
+    logger.info(f"查询: {args.query}")
+    logger.info(f"定位: {result['top_filename']} 第{result['top_page']}页")
+    logger.info(f"图片: {result['image_path']}")
+    logger.info(f"{'='*50}")
+    logger.info(f"上下文:\n{result['context_text'][:500]}...")

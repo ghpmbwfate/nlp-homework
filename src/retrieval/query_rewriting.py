@@ -53,6 +53,8 @@ class QueryRewriter:
             )
             content = response.choices[0].message.content
             return content.strip() if content else ""
+        except (ConnectionError, TimeoutError) as e:
+            raise RuntimeError(f"LLM API network error: {e}") from e
         except Exception as e:
             raise RuntimeError(f"LLM API call failed: {e}") from e
 

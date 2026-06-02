@@ -5,6 +5,7 @@ PDF解析模块：MinerU提取文本/表格 + 每页转图片
 
 import os
 import json
+import logging
 import re
 import subprocess
 from pathlib import Path
@@ -14,6 +15,8 @@ from pdf2image import convert_from_path
 
 from src.config import PARSED_DIR, IMAGES_DIR
 
+logger = logging.getLogger(__name__)
+
 
 def _check_mineru_available() -> bool:
     """检查MinerU是否可用（含关键依赖检测）"""
@@ -21,7 +24,7 @@ def _check_mineru_available() -> bool:
     try:
         import magic_pdf
     except ImportError:
-        print("[INFO] MinerU 未安装 (magic_pdf 不可用)")
+        logger.info("MinerU 未安装 (magic_pdf 不可用)")
         return False
 
     # Step 2: 检查关键依赖（detectron2/torch等在Windows上常缺失）
@@ -30,9 +33,9 @@ def _check_mineru_available() -> bool:
     except ImportError as e:
         err_msg = str(e)
         if "detectron2" in err_msg:
-            print("[INFO] MinerU 依赖 detectron2 缺失 (Windows常见问题)")
+            logger.info("MinerU 依赖 detectron2 缺失 (Windows常见问题)")
         else:
-            print(f"[INFO] MinerU 依赖缺失: {e}")
+            logger.info(f"MinerU 依赖缺失: {e}")
         return False
 
     # Step 3: 子进程验证magic-pdf命令行可用
@@ -42,13 +45,13 @@ def _check_mineru_available() -> bool:
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
-            print(f"[INFO] MinerU 命令行异常 (返回码 {result.returncode})")
+            logger.info(f"MinerU 命令行异常 (返回码 {result.returncode})")
             return False
     except (subprocess.SubprocessError, FileNotFoundError) as e:
-        print(f"[INFO] MinerU 子进程检查失败: {e}")
+        logger.info(f"MinerU 子进程检查失败: {e}")
         return False
 
-    print("[INFO] MinerU 已就绪")
+    logger.info("MinerU 已就绪")
     return True
 
 
@@ -60,7 +63,7 @@ def parse_pdfs_with_mineru(pdf_dir: str, output_dir: str = None):
 
     pdf_files = sorted(pdf_dir.glob("*.pdf"))
     if not pdf_files:
-        print(f"[WARNING] 未找到PDF文件: {pdf_dir}")
+        logger.warning(f"未找到PDF文件: {pdf_dir}")
         return {}
 
     # 检查MinerU是否可用
@@ -68,15 +71,15 @@ def parse_pdfs_with_mineru(pdf_dir: str, output_dir: str = None):
 
     # ---- MinerU 不可用的 PyMuPDF 回退路径 ----
     if not mineru_ok:
-        print("[INFO] MinerU 不可用，回退到 PyMuPDF (fitz) 进行文本提取")
+        logger.info("MinerU 不可用，回退到 PyMuPDF (fitz) 进行文本提取")
         results = {}
         for pdf_path in pdf_files:
             pdf_name = pdf_path.stem
-            print(f"[INFO] [PyMuPDF] 正在解析: {pdf_path.name}")
+            logger.info(f"[PyMuPDF] 正在解析: {pdf_path.name}")
             try:
                 doc = fitz.open(pdf_path)
             except Exception as e:
-                print(f"[ERROR] [PyMuPDF] 无法打开PDF {pdf_path.name}: {e}")
+                logger.error(f"[PyMuPDF] 无法打开PDF {pdf_path.name}: {e}")
                 continue
 
             pdf_output_dir = output_dir / pdf_name / "auto"
@@ -96,7 +99,7 @@ def parse_pdfs_with_mineru(pdf_dir: str, output_dir: str = None):
                 "markdown_path": str(md_files[0]) if md_files else "",
                 "content": ""
             }
-            print(f"[INFO] [PyMuPDF] 解析完成: {pdf_path.name}, 共 {len(md_files)} 页")
+            logger.info(f"[PyMuPDF] 解析完成: {pdf_path.name}, 共 {len(md_files)} 页")
 
         # 保存解析结果索引（与MinerU格式一致）
         index_path = output_dir / "parse_index.json"
@@ -110,15 +113,15 @@ def parse_pdfs_with_mineru(pdf_dir: str, output_dir: str = None):
             }
             json.dump(index_data, f, ensure_ascii=False, indent=2)
 
-        print(f"[INFO] 解析完成，共处理 {len(results)} 个PDF")
+        logger.info(f"解析完成，共处理 {len(results)} 个PDF")
         return results
 
     # ---- MinerU 可用时的原始逻辑 ----
-    print("[INFO] 使用 MinerU 解析 PDF")
+    logger.info("使用 MinerU 解析 PDF")
     results = {}
     for pdf_path in pdf_files:
         pdf_name = pdf_path.stem
-        print(f"[INFO] 正在解析: {pdf_path.name}")
+        logger.info(f"正在解析: {pdf_path.name}")
 
         # 调用magic-pdf命令行
         cmd = [
@@ -129,12 +132,12 @@ def parse_pdfs_with_mineru(pdf_dir: str, output_dir: str = None):
         ]
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=300)
-            print(f"[INFO] 解析完成: {pdf_path.name}")
+            logger.info(f"解析完成: {pdf_path.name}")
         except subprocess.CalledProcessError as e:
-            print(f"[ERROR] 解析失败 {pdf_path.name}: {e.stderr}")
+            logger.error(f"解析失败 {pdf_path.name}: {e.stderr}")
             continue
         except subprocess.TimeoutExpired:
-            print(f"[ERROR] 解析超时 {pdf_path.name}")
+            logger.error(f"解析超时 {pdf_path.name}")
             continue
 
         # 读取解析出的markdown
@@ -165,7 +168,7 @@ def parse_pdfs_with_mineru(pdf_dir: str, output_dir: str = None):
         }
         json.dump(index_data, f, ensure_ascii=False, indent=2)
 
-    print(f"[INFO] 解析完成，共处理 {len(results)} 个PDF")
+    logger.info(f"解析完成，共处理 {len(results)} 个PDF")
     return results
 
 
@@ -177,19 +180,19 @@ def convert_pdfs_to_images(pdf_dir: str, output_dir: str = None, dpi: int = 200)
 
     pdf_files = sorted(pdf_dir.glob("*.pdf"))
     if not pdf_files:
-        print(f"[WARNING] 未找到PDF文件: {pdf_dir}")
+        logger.warning(f"未找到PDF文件: {pdf_dir}")
         return {}
 
     image_index = {}  # {filename_page: image_path}
 
     for pdf_path in pdf_files:
         pdf_name = pdf_path.stem
-        print(f"[INFO] 正在转换图片: {pdf_path.name}")
+        logger.info(f"正在转换图片: {pdf_path.name}")
 
         try:
             images = convert_from_path(str(pdf_path), dpi=dpi)
         except Exception as e:
-            print(f"[ERROR] 转换失败 {pdf_path.name}: {e}")
+            logger.error(f"转换失败 {pdf_path.name}: {e}")
             continue
 
         for page_num, image in enumerate(images, start=1):
@@ -198,14 +201,14 @@ def convert_pdfs_to_images(pdf_dir: str, output_dir: str = None, dpi: int = 200)
             image.save(str(image_path), "PNG")
             image_index[f"{pdf_name}_page_{page_num}"] = str(image_path)
 
-        print(f"[INFO] 转换完成: {pdf_path.name}, 共 {len(images)} 页")
+        logger.info(f"转换完成: {pdf_path.name}, 共 {len(images)} 页")
 
     # 保存图片索引
     index_path = output_dir / "image_index.json"
     with open(index_path, "w", encoding="utf-8") as f:
         json.dump(image_index, f, ensure_ascii=False, indent=2)
 
-    print(f"[INFO] 图片转换完成，共 {len(image_index)} 张")
+    logger.info(f"图片转换完成，共 {len(image_index)} 张")
     return image_index
 
 
@@ -299,16 +302,16 @@ def build_page_content_index(parsed_data_dir: str = None,
     pdf_files_at_data = sorted(pdf_dir.glob("*.pdf"))
 
     if not parse_index and pdf_files_at_data:
-        print(f"[INFO] parse_index为空，回退到PyMuPDF直接从{DATA_DIR}提取文本")
+        logger.info(f"parse_index为空，回退到PyMuPDF直接从{DATA_DIR}提取文本")
         import fitz
         all_pages = []
         for pdf_path in pdf_files_at_data:
             pdf_name = pdf_path.stem
-            print(f"[INFO] [PyMuPDF] 正在提取: {pdf_path.name}")
+            logger.info(f"[PyMuPDF] 正在提取: {pdf_path.name}")
             try:
                 doc = fitz.open(pdf_path)
             except Exception as e:
-                print(f"[ERROR] [PyMuPDF] 无法打开 {pdf_path.name}: {e}")
+                logger.error(f"[PyMuPDF] 无法打开 {pdf_path.name}: {e}")
                 continue
             for page_num, page in enumerate(doc, 1):
                 text = page.get_text()
@@ -319,15 +322,15 @@ def build_page_content_index(parsed_data_dir: str = None,
                     "tables": []
                 })
             doc.close()
-            print(f"[INFO] [PyMuPDF] 提取完成: {pdf_path.name}")
+            logger.info(f"[PyMuPDF] 提取完成: {pdf_path.name}")
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(all_pages, f, ensure_ascii=False, indent=2)
-        print(f"[INFO] 页面内容索引已保存: {output_path}, 共 {len(all_pages)} 页")
+        logger.info(f"页面内容索引已保存: {output_path}, 共 {len(all_pages)} 页")
         return all_pages
 
     if not parse_index:
-        print("[ERROR] 未找到parse_index.json，且DATA_DIR中无PDF文件")
+        logger.error("未找到parse_index.json，且DATA_DIR中无PDF文件")
         return []
 
     # 有索引时，按页拆分markdown
@@ -335,7 +338,7 @@ def build_page_content_index(parsed_data_dir: str = None,
     for pdf_name, info in parse_index.items():
         md_path = Path(info["markdown_path"])
         if not md_path.exists():
-            print(f"[WARNING] markdown文件不存在: {md_path}")
+            logger.warning(f"markdown文件不存在: {md_path}")
             continue
 
         # 检查是否为PyMuPDF多文件模式（每页一个md）
@@ -354,18 +357,18 @@ def build_page_content_index(parsed_data_dir: str = None,
                     "text": text.strip(),
                     "tables": extract_tables(text)
                 })
-            print(f"[INFO] {pdf_name}: 拆分为 {len(md_files)} 页 (PyMuPDF)")
+            logger.info(f"{pdf_name}: 拆分为 {len(md_files)} 页 (PyMuPDF)")
         else:
             # MinerU模式：单文件内含分页标记
             content = md_path.read_text(encoding="utf-8")
             pages = split_markdown_by_page(content, pdf_name)
             all_pages.extend(pages)
-            print(f"[INFO] {pdf_name}: 拆分为 {len(pages)} 页 (MinerU)")
+            logger.info(f"{pdf_name}: 拆分为 {len(pages)} 页 (MinerU)")
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(all_pages, f, ensure_ascii=False, indent=2)
 
-    print(f"[INFO] 页面内容索引已保存: {output_path}, 共 {len(all_pages)} 页")
+    logger.info(f"页面内容索引已保存: {output_path}, 共 {len(all_pages)} 页")
     return all_pages
 
 
@@ -385,20 +388,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if not args.skip_parse:
-        print("=" * 50)
-        print("Step 1: MinerU解析PDF")
-        print("=" * 50)
+        logger.info("=" * 50)
+        logger.info("Step 1: MinerU解析PDF")
+        logger.info("=" * 50)
         parse_pdfs_with_mineru(args.pdf_dir, args.parsed_dir)
-        print()
 
-        print("=" * 50)
-        print("Step 2: 构建页面内容索引")
-        print("=" * 50)
+        logger.info("=" * 50)
+        logger.info("Step 2: 构建页面内容索引")
+        logger.info("=" * 50)
         build_page_content_index(args.parsed_dir)
-        print()
 
     if not args.skip_images:
-        print("=" * 50)
-        print("Step 3: 转换PDF为页面图片")
-        print("=" * 50)
+        logger.info("=" * 50)
+        logger.info("Step 3: 转换PDF为页面图片")
+        logger.info("=" * 50)
         convert_pdfs_to_images(args.pdf_dir, args.image_dir, args.dpi)

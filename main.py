@@ -7,6 +7,7 @@
 """
 
 import json
+import logging
 import argparse
 from pathlib import Path
 
@@ -28,6 +29,8 @@ from src.config import (
     FINAL_TOP_K,
     MAX_NEW_TOKENS,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _build_retriever(retriever_type: str, **kwargs):
@@ -99,17 +102,16 @@ def run_pipeline(test_path: str = None,
     max_new_tokens = max_new_tokens if max_new_tokens is not None else MAX_NEW_TOKENS
 
     # 1. 加载测试数据
-    print("=" * 50)
-    print("Step 1: 加载测试数据")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("Step 1: 加载测试数据")
+    logger.info("=" * 50)
     questions = load_test_data(test_path)
-    print(f"[INFO] 加载了 {len(questions)} 个问题")
+    logger.info(f"加载了 {len(questions)} 个问题")
 
     # 2. 初始化检索器
-    print()
-    print("=" * 50)
-    print(f"Step 2: 初始化检索器 ({retriever_type})")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info(f"Step 2: 初始化检索器 ({retriever_type})")
+    logger.info("=" * 50)
     retriever = _build_retriever(
         retriever_type,
         chroma_dir=chroma_dir,
@@ -124,84 +126,99 @@ def run_pipeline(test_path: str = None,
     )
 
     # 3. 初始化LLM生成器
-    print()
-    print("=" * 50)
-    print("Step 3: 初始化LLM生成器")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("Step 3: 初始化LLM生成器")
+    logger.info("=" * 50)
     generator = LLMGenerator(model=llm_model)
 
     # 4. 逐题检索+生成
-    print()
-    print("=" * 50)
-    print("Step 4: 逐题处理")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("Step 4: 逐题处理")
+    logger.info("=" * 50)
 
     results = []
     for i, item in enumerate(questions):
         question = item.get("question", item.get("query", ""))
 
-        print(f"\n[{i+1}/{len(questions)}] 问题: {question[:50]}...")
+        logger.info(f"[{i+1}/{len(questions)}] 问题: {question[:50]}...")
 
-        # 预分类问题类型（供检索和生成共用）
-        qtype_enum = classify_question(question)
-        qtype_str = qtype_enum.value
-        print(f"  类型: {qtype_str}")
+        try:
+            # 预分类问题类型（供检索和生成共用）
+            qtype_enum = classify_question(question)
+            qtype_str = qtype_enum.value
+            logger.info(f"类型: {qtype_str}")
 
-        # 检索（传入问题类型以启用多阶段重排序的类型过滤）
-        context = retriever.search_with_context(question, question_type=qtype_str)
-        top_filename = context["top_filename"]
-        top_page = context["top_page"]
-        context_text = context["context_text"]
-        image_path = context["image_path"]
+            # 检索（传入问题类型以启用多阶段重排序的类型过滤）
+            context = retriever.search_with_context(question, question_type=qtype_str)
+            top_filename = context["top_filename"]
+            top_page = context["top_page"]
+            context_text = context["context_text"]
+            image_path = context["image_path"]
 
-        print(f"  定位: {top_filename} 第{top_page}页")
+            logger.info(f"定位: {top_filename} 第{top_page}页")
 
-        # 生成答案（image_path 在文本-only LLM 模式下被忽略，保留兼容）
-        gen_result = generator.generate(
-            question=question,
-            context_text=context_text,
-            image_path=image_path,
-            max_new_tokens=max_new_tokens
-        )
-        answer = gen_result["answer"]
-        qtype = gen_result["question_type"]
-        citations = gen_result["citations"]
+            # 生成答案（image_path 在文本-only LLM 模式下被忽略，保留兼容）
+            gen_result = generator.generate(
+                question=question,
+                context_text=context_text,
+                image_path=image_path,
+                max_new_tokens=max_new_tokens
+            )
+            answer = gen_result["answer"]
+            qtype = gen_result["question_type"]
+            citations = gen_result["citations"]
 
-        # Self-RAG: 自洽性检查
-        self_check = run_self_check(answer, context_text)
-        verdict = self_check["verdict"]
-        print(f"  答案: {answer[:80]}...")
-        print(f"  自洽性: {verdict} (数字支持率={self_check['num_support_ratio']:.2f})")
+            # Self-RAG: 自洽性检查
+            self_check = run_self_check(answer, context_text)
+            verdict = self_check["verdict"]
+            logger.info(f"答案: {answer[:80]}...")
+            logger.info(f"自洽性: {verdict} (数字支持率={self_check['num_support_ratio']:.2f})")
 
-        results.append({
-            "question": question,
-            "filename": top_filename,
-            "page": top_page,
-            "answer": answer,
-            "question_type": qtype,
-            "citations": citations,
-            "has_citations": has_citations(answer),
-            "self_check": {
-                "verdict": verdict,
-                "num_support_ratio": self_check["num_support_ratio"],
-                "keyword_overlap_ratio": self_check["keyword_overlap_ratio"],
-                "feedback": self_check["feedback"],
-            },
-        })
+            results.append({
+                "question": question,
+                "filename": top_filename,
+                "page": top_page,
+                "answer": answer,
+                "question_type": qtype,
+                "citations": citations,
+                "has_citations": has_citations(answer),
+                "self_check": {
+                    "verdict": verdict,
+                    "num_support_ratio": self_check["num_support_ratio"],
+                    "keyword_overlap_ratio": self_check["keyword_overlap_ratio"],
+                    "feedback": self_check["feedback"],
+                },
+            })
+        except Exception as e:
+            logger.error(f"处理失败: {e}")
+            results.append({
+                "question": question,
+                "filename": "",
+                "page": -1,
+                "answer": f"处理失败: {e}",
+                "question_type": "error",
+                "citations": [],
+                "has_citations": False,
+                "self_check": {
+                    "verdict": "error",
+                    "num_support_ratio": 0.0,
+                    "keyword_overlap_ratio": 0.0,
+                    "feedback": str(e),
+                },
+            })
 
     # 5. 保存结果
-    print()
-    print("=" * 50)
-    print("Step 5: 保存结果")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("Step 5: 保存结果")
+    logger.info("=" * 50)
 
     # 确保输出目录存在
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 
-    print(f"[INFO] 结果已保存至 {output_path}")
-    print(f"[INFO] 共处理 {len(results)} 个问题")
+    logger.info(f"结果已保存至 {output_path}")
+    logger.info(f"共处理 {len(results)} 个问题")
 
     return results
 

@@ -3,9 +3,12 @@
 """
 
 import json
+import logging
 import argparse
 
 from src.evaluation import evaluate, print_report
+
+logger = logging.getLogger(__name__)
 from src.config import (
     DEFAULT_OUTPUT_PATH,
     DEFAULT_GROUND_TRUTH_PATH,
@@ -27,8 +30,8 @@ def main():
     with open(args.gold, "r", encoding="utf-8") as f:
         gold_data = json.load(f)
 
-    print(f"[INFO] 加载预测结果: {len(pred_data)} 条")
-    print(f"[INFO] 加载标准答案: {len(gold_data)} 条")
+    logger.info(f"加载预测结果: {len(pred_data)} 条")
+    logger.info(f"加载标准答案: {len(gold_data)} 条")
 
     metrics = evaluate(pred_data, gold_data)
     if metrics:

@@ -3,6 +3,7 @@
 文本-only 生成；支持分问题类型 Prompt 与引用溯源
 """
 
+import logging
 import os
 from typing import Optional
 
@@ -13,6 +14,8 @@ from src.config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
 from .citation import add_citation_instruction, extract_citations
 from .prompts import load_prompt_template
 from .question_classifier import QuestionType, classify_question
+
+logger = logging.getLogger(__name__)
 
 
 class LLMGenerator:
@@ -31,13 +34,21 @@ class LLMGenerator:
                 "OpenAI API key is required. "
                 "Set OPENAI_API_KEY in .env or pass api_key."
             )
-        base_url = base_url or OPENAI_BASE_URL or os.environ.get(
-            "OPENAI_BASE_URL", "http://api.bnuzh.top:8080/v1"
-        )
-        self.model = model or OPENAI_MODEL or "GPT-OSS-20B-BF16"
+        base_url = base_url or OPENAI_BASE_URL or os.environ.get("OPENAI_BASE_URL")
+        if not base_url:
+            raise ValueError(
+                "OpenAI base URL is required. "
+                "Set OPENAI_BASE_URL in .env or pass base_url."
+            )
+        self.model = model or OPENAI_MODEL or os.environ.get("OPENAI_MODEL")
+        if not self.model:
+            raise ValueError(
+                "OpenAI model name is required. "
+                "Set OPENAI_MODEL in .env or pass model."
+            )
         self.temperature = temperature
         self.client = OpenAI(api_key=api_key, base_url=base_url)
-        print(f"[INFO] LLM 生成器就绪: model={self.model}, base_url={base_url}")
+        logger.info(f"LLM 生成器就绪: model={self.model}, base_url={base_url}")
 
     def generate(
         self,
@@ -99,6 +110,8 @@ class LLMGenerator:
             )
             content = response.choices[0].message.content
             return content.strip() if content else ""
+        except (ConnectionError, TimeoutError) as e:
+            raise RuntimeError(f"LLM API network error: {e}") from e
         except Exception as e:
             raise RuntimeError(f"LLM API call failed: {e}") from e
 
@@ -117,8 +130,8 @@ class LLMGenerator:
         """
         results = []
         for i, q in enumerate(questions):
-            print(
-                f"[INFO] 生成答案 {i + 1}/{len(questions)}: "
+            logger.info(
+                f"生成答案 {i + 1}/{len(questions)}: "
                 f"{q['question'][:30]}..."
             )
             result = self.generate(
@@ -151,9 +164,9 @@ if __name__ == "__main__":
         max_new_tokens=args.max_new_tokens,
     )
 
-    print(f"\n{'=' * 50}")
-    print(f"问题: {args.question}")
-    print(f"类型: {result['question_type']}")
-    print(f"答案: {result['answer']}")
-    print(f"引用: {result['citations']}")
-    print(f"{'=' * 50}")
+    logger.info(f"{'=' * 50}")
+    logger.info(f"问题: {args.question}")
+    logger.info(f"类型: {result['question_type']}")
+    logger.info(f"答案: {result['answer']}")
+    logger.info(f"引用: {result['citations']}")
+    logger.info(f"{'=' * 50}")

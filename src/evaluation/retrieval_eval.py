@@ -7,8 +7,11 @@ Metrics:
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import List, Dict
+
+logger = logging.getLogger(__name__)
 
 
 def evaluate_retrieval(
@@ -97,21 +100,21 @@ def print_retrieval_report(eval_result: Dict, output_path: str = None):
     metrics = eval_result["metrics"]
     n = eval_result["count"]
 
-    print("\n" + "=" * 60)
-    print("检索评估报告")
-    print("=" * 60)
-    print(f"样本数量: {n}")
-    print("-" * 60)
-    print(f"MRR:           {metrics.get('mrr', 0):.4f}")
+    logger.info("\n" + "=" * 60)
+    logger.info("检索评估报告")
+    logger.info("=" * 60)
+    logger.info(f"样本数量: {n}")
+    logger.info("-" * 60)
+    logger.info(f"MRR:           {metrics.get('mrr', 0):.4f}")
     for k in [1, 3, 5, 10]:
         rk = metrics.get(f"recall@{k}", 0)
         hk = metrics.get(f"hit_rate@{k}", 0)
-        print(f"Recall@{k}:      {rk:.4f}")
-        print(f"Hit Rate@{k}:    {hk:.4f}")
-    print("=" * 60)
+        logger.info(f"Recall@{k}:      {rk:.4f}")
+        logger.info(f"Hit Rate@{k}:    {hk:.4f}")
+    logger.info("=" * 60)
 
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(eval_result, f, ensure_ascii=False, indent=2)
-        print(f"\n[INFO] 详细结果已保存至 {output_path}")
+        logger.info(f"详细结果已保存至 {output_path}")

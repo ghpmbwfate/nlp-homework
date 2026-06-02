@@ -5,6 +5,7 @@ VLM 图表提取模块：使用 DashScope 多模态模型分析 PDF 页面图片
 
 import base64
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Optional
@@ -18,6 +19,8 @@ from src.config import (
     IMAGES_DIR,
     PARSED_DIR,
 )
+
+logger = logging.getLogger(__name__)
 
 # ── 输出路径 ──────────────────────────────────────────────────
 # 每个 PDF 的结果保存在 PARSED_DIR/{pdf_name}/chart_descriptions.json
@@ -148,7 +151,7 @@ class ChartExtractor:
         self.retry_delay = retry_delay
         self.page_image_dir = Path(page_image_dir) if page_image_dir else IMAGES_DIR
         self.client = OpenAI(api_key=api_key, base_url=base_url)
-        print(f"[INFO] 图表提取器就绪: model={self.model}, base_url={base_url}")
+        logger.info(f"图表提取器就绪: model={self.model}, base_url={base_url}")
 
     def _call_vlm(self, image_path: str, filename: str, page_num: int) -> dict:
         """调用 DashScope VLM API 分析单页图片"""
@@ -187,9 +190,7 @@ class ChartExtractor:
                     return parsed
 
                 # JSON 解析失败——当作 raw 结果返回
-                print(
-                    f"  [WARNING] JSON 解析失败，保留原始响应"
-                )
+                logger.warning("JSON 解析失败，保留原始响应")
                 return {
                     "page_summary": "JSONDecodeError: 无法解析 VLM 响应",
                     "has_charts": False,
@@ -204,13 +205,13 @@ class ChartExtractor:
                 last_error = e
                 if attempt < self.max_retries - 1:
                     wait = self.retry_delay * (2 ** attempt)
-                    print(
-                        f"  [WARNING] API 调用失败 (尝试 {attempt + 1}/{self.max_retries}), "
+                    logger.warning(
+                        f"API 调用失败 (尝试 {attempt + 1}/{self.max_retries}), "
                         f"{wait:.0f}s 后重试: {e}"
                     )
                     time.sleep(wait)
                 else:
-                    print(f"  [ERROR] API 调用最终失败: {e}")
+                    logger.error(f"API 调用最终失败: {e}")
 
         raise RuntimeError(
             f"VLM API call failed after {self.max_retries} attempts: {last_error}"
@@ -223,10 +224,10 @@ class ChartExtractor:
         image_name = f"{filename}_page_{page_num}.png"
         image_path = self.page_image_dir / image_name
         if not image_path.exists():
-            print(f"  [SKIP] 图片不存在: {image_name}")
+            logger.info(f"[SKIP] 图片不存在: {image_name}")
             return None
 
-        print(f"  [INFO] 分析: {filename} 第{page_num}页")
+        logger.info(f"分析: {filename} 第{page_num}页")
         result = self._call_vlm(str(image_path), filename, page_num)
         result["filename"] = filename
         result["page"] = page_num
@@ -247,9 +248,9 @@ class ChartExtractor:
             - all_results: {pdf_name: [page_dict, ...]}  已有的完整结果
             - existing_keys: {(filename, page), ...}     已处理的页面集合
         """
-        print("=" * 50)
-        print("预扫描：检查已处理页面")
-        print("=" * 50)
+        logger.info("=" * 50)
+        logger.info("预扫描：检查已处理页面")
+        logger.info("=" * 50)
 
         all_results: dict[str, list[dict]] = {}
         existing_keys: set[tuple[str, int]] = set()
@@ -275,19 +276,18 @@ class ChartExtractor:
                 existing_keys.add((r["filename"], r["page"]))
 
             status = "[DONE]" if remain_pdf == 0 else f"还需 {remain_pdf} 页"
-            print(
-                f"  [{done_pdf:>3}/{total_pdf:>3}] {fn[:45]:45s}  {status}"
+            logger.info(
+                f"[{done_pdf:>3}/{total_pdf:>3}] {fn[:45]:45s}  {status}"
             )
 
         total_all = done_total + remain_total
-        print("-" * 50)
-        print(
-            f"  合计: 已处理 {done_total} 页 / 共 {total_all} 页"
+        logger.info("-" * 50)
+        logger.info(
+            f"合计: 已处理 {done_total} 页 / 共 {total_all} 页"
             f" ({remain_total} 页待处理)"
         )
         if done_total == total_all and total_all > 0:
-            print("  所有页面已完成，无需处理。")
-        print()
+            logger.info("所有页面已完成，无需处理。")
 
         return all_results, existing_keys
 
@@ -317,7 +317,7 @@ class ChartExtractor:
         """
         tasks = self._collect_tasks(image_index_path)
         total = len(tasks)
-        print(f"[INFO] 共发现 {total} 张页面图片")
+        logger.info(f"共发现 {total} 张页面图片")
 
         # 按 PDF 分组，应用 per_pdf 限制
         if per_pdf is not None:
@@ -329,27 +329,27 @@ class ChartExtractor:
                     filtered_tasks.append((filename, page_num))
                     pdf_counters[filename] = cnt + 1
             tasks = filtered_tasks
-            print(f"[INFO] 每 PDF 最多 {per_pdf} 页，共 {len(tasks)} 个任务")
+            logger.info(f"每 PDF 最多 {per_pdf} 页，共 {len(tasks)} 个任务")
 
         # ── 预扫描：加载已有结果 ──
         if no_skip:
-            print("[INFO] --no_skip 已启用，将忽略已有结果重新处理所有页面")
+            logger.info("--no_skip 已启用，将忽略已有结果重新处理所有页面")
             all_results: dict[str, list[dict]] = {}
             existing_keys: set[tuple[str, int]] = set()
         else:
             all_results, existing_keys = self._pre_scan(tasks)
             if not existing_keys:
-                print("[INFO] 无已有结果，将处理所有页面\n")
+                logger.info("无已有结果，将处理所有页面")
             else:
                 skipped_in_tasks = sum(
                     1 for t in tasks if t in existing_keys
                 )
                 if skipped_in_tasks == len(tasks):
-                    print("[INFO] 所有待处理页面均已完成，无需处理。\n")
+                    logger.info("所有待处理页面均已完成，无需处理。")
                     return all_results
-                print(
-                    f"[INFO] 在本次任务中，已有 {skipped_in_tasks} 页将被跳过。"
-                    f" 开始处理...\n"
+                logger.info(
+                    f"在本次任务中，已有 {skipped_in_tasks} 页将被跳过。"
+                    f" 开始处理..."
                 )
 
         processed = 0
@@ -364,7 +364,7 @@ class ChartExtractor:
                 skipped += 1
                 continue
             if max_pages is not None and processed >= max_pages:
-                print(f"[INFO] 已达到最大处理数 {max_pages}，停止")
+                logger.info(f"已达到最大处理数 {max_pages}，停止")
                 break
 
             try:
@@ -374,7 +374,7 @@ class ChartExtractor:
                     processed += 1
                     dirty_pdfs.add(filename)
             except Exception as e:
-                print(f"  [ERROR] 第{page_num}页处理失败: {e}")
+                logger.error(f"第{page_num}页处理失败: {e}")
                 failed += 1
                 all_results.setdefault(filename, []).append({
                     "filename": filename,
@@ -388,8 +388,8 @@ class ChartExtractor:
                 })
                 dirty_pdfs.add(filename)
 
-            print(
-                f"  [PROGRESS] {i + 1}/{len(tasks)} "
+            logger.info(
+                f"[PROGRESS] {i + 1}/{len(tasks)} "
                 f"(已处理 {processed}, 跳过 {skipped}, 失败 {failed})"
             )
             # 每处理 10 页保存一次有变更的 PDF
@@ -407,13 +407,13 @@ class ChartExtractor:
         dirty_pdfs.clear()
 
         total_processed = sum(len(v) for v in all_results.values())
-        print(
-            f"\n[INFO] 处理完成! 共 {total} 页, "
+        logger.info(
+            f"处理完成! 共 {total} 页, "
             f"成功 {processed}, 跳过 {skipped}, 失败 {failed}"
         )
-        print(f"[INFO] 结果已保存至 {PARSED_DIR}")
+        logger.info(f"结果已保存至 {PARSED_DIR}")
         for fn in sorted(all_results):
-            print(f"  {self._output_path_for(fn)} ({len(all_results[fn])} 页)")
+            logger.info(f"  {self._output_path_for(fn)} ({len(all_results[fn])} 页)")
 
         return all_results
 
@@ -532,7 +532,7 @@ def merge_with_page_content(
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(pages, f, ensure_ascii=False, indent=2)
 
-    print(f"[INFO] 合并完成，已写入 {output_path}")
+    logger.info(f"合并完成，已写入 {output_path}")
     return pages
 
 

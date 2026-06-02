@@ -39,10 +39,8 @@ DASHSCOPE_MODEL = os.environ.get("DASHSCOPE_MODEL", "qwen-turbo")
 DASHSCOPE_VL_MODEL = os.environ.get("DASHSCOPE_VL_MODEL", "qwen-vl-max")
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_BASE_URL = os.environ.get(
-    "OPENAI_BASE_URL", "http://api.bnuzh.top:8080/v1"
-)
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "GPT-OSS-20B-BF16")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "")
 
 # 模型缓存（使用 ModelScope 下载和管理）
 MODEL_CACHE_DIR = str(PROJECT_ROOT / ".cache" / "modelscope")

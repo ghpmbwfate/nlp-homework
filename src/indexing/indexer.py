@@ -6,6 +6,7 @@
 """
 
 import json
+import logging
 import pickle
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from chromadb.utils import embedding_functions
 from rank_bm25 import BM25Okapi
 
 from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, PARSED_DIR, _resolve_model_path
+
+logger = logging.getLogger(__name__)
 
 
 def load_parsed_data(parsed_dir: str = None) -> list[dict]:
@@ -49,7 +52,9 @@ def create_chunks(pages: list[dict]) -> list[dict]:
         # 文本chunk：拼接所有 text 段落的 content
         text_parts = page.get("text", [])
         text_content = " ".join(
-            t.get("content", "") for t in text_parts if t.get("content")
+            (t.get("content", "") if isinstance(t, dict) else str(t))
+            for t in text_parts
+            if (t.get("content", "") if isinstance(t, dict) else str(t))
         ).strip()
 
         if text_content and len(text_content) > 10:
@@ -64,10 +69,15 @@ def create_chunks(pages: list[dict]) -> list[dict]:
                 "content": text_content,
             })
 
-        # 图表chunk
-        if page.get("has_charts"):
-            for ci, chart in enumerate(page.get("charts", [])):
-                content = _format_chart_content(chart, page_summary)
+        # 图表chunk (支持 chart_descriptions 嵌套格式和扁平格式)
+        chart_desc = page.get("chart_descriptions") or {}
+        has_charts = page.get("has_charts") or chart_desc.get("has_charts", False)
+        charts = page.get("charts") or chart_desc.get("charts", [])
+        chart_page_summary = chart_desc.get("page_summary", page_summary)
+
+        if has_charts:
+            for ci, chart in enumerate(charts):
+                content = _format_chart_content(chart, chart_page_summary)
                 if content.strip():
                     chunks.append({
                         "chunk_id": f"{filename}_p{page_num}_chart{ci}",
@@ -78,9 +88,12 @@ def create_chunks(pages: list[dict]) -> list[dict]:
                     })
 
         # VLM表格chunk
-        if page.get("has_tables"):
-            for ti, table in enumerate(page.get("tables", [])):
-                content = _format_chart_table_content(table, page_summary)
+        has_tables = page.get("has_tables") or chart_desc.get("has_tables", False)
+        tables = page.get("tables") or chart_desc.get("tables", [])
+
+        if has_tables:
+            for ti, table in enumerate(tables):
+                content = _format_chart_table_content(table, chart_page_summary)
                 if content.strip():
                     chunks.append({
                         "chunk_id": f"{filename}_p{page_num}_charttable{ti}",
@@ -90,7 +103,7 @@ def create_chunks(pages: list[dict]) -> list[dict]:
                         "content": content.strip(),
                     })
 
-    print(f"[INFO] 共创建 {len(chunks)} 个chunk")
+    logger.info(f"共创建 {len(chunks)} 个chunk")
     return chunks
 
 
@@ -152,7 +165,7 @@ def build_dense_index(chunks: list[dict],
 
     effective_model = _resolve_model_path("Xorbits/bge-m3")
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"[INFO] 加载embedding模型: {effective_model} (device={device})")
+    logger.info(f"加载embedding模型: {effective_model} (device={device})")
     embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name=effective_model,
         device=device,
@@ -186,9 +199,9 @@ def build_dense_index(chunks: list[dict],
             documents=documents,
             metadatas=metadatas
         )
-        print(f"\r[INFO] 稠密索引构建进度: {batch_idx + 1}/{total_batches} 批次", end="", flush=True)
+        logger.info(f"稠密索引构建进度: {batch_idx + 1}/{total_batches} 批次")
 
-    print(f"\n[INFO] 稠密索引构建完成: {len(chunks)} 个chunk, 存储于 {persist_path}")
+    logger.info(f"稠密索引构建完成: {len(chunks)} 个chunk, 存储于 {persist_path}")
     return collection
 
 
@@ -203,7 +216,7 @@ def build_bm25_index(chunks: list[dict],
     save_path = Path(save_dir) if save_dir else INDEX_BM25_DIR
     save_path.mkdir(parents=True, exist_ok=True)
 
-    print("[INFO] 构建BM25索引...")
+    logger.info("构建BM25索引...")
 
     # 分词
     tokenized_corpus = [tokenize_chinese(c["content"]) for c in chunks]
@@ -227,7 +240,7 @@ def build_bm25_index(chunks: list[dict],
     with open(save_path / "chunks.json", "w", encoding="utf-8") as f:
         json.dump(chunk_meta, f, ensure_ascii=False, indent=2)
 
-    print(f"[INFO] BM25索引构建完成: {len(chunks)} 个chunk, 存储于 {save_path}")
+    logger.info(f"BM25索引构建完成: {len(chunks)} 个chunk, 存储于 {save_path}")
     return bm25, chunk_meta
 
 
@@ -236,32 +249,28 @@ def build_all_indexes(parsed_dir: str = None,
                       chroma_dir: str = None,
                       bm25_dir: str = None):
     """构建所有索引"""
-    print("=" * 50)
-    print("Step 1: 加载解析数据")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("Step 1: 加载解析数据")
+    logger.info("=" * 50)
     pages = load_parsed_data(parsed_dir)
-    print(f"[INFO] 加载了 {len(pages)} 页内容")
+    logger.info(f"加载了 {len(pages)} 页内容")
 
-    print()
-    print("=" * 50)
-    print("Step 2: 创建chunk")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("Step 2: 创建chunk")
+    logger.info("=" * 50)
     chunks = create_chunks(pages)
 
-    print()
-    print("=" * 50)
-    print("Step 3: 构建稠密索引")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("Step 3: 构建稠密索引")
+    logger.info("=" * 50)
     build_dense_index(chunks, model_name=dense_model, persist_dir=chroma_dir)
 
-    print()
-    print("=" * 50)
-    print("Step 4: 构建BM25索引")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("Step 4: 构建BM25索引")
+    logger.info("=" * 50)
     build_bm25_index(chunks, save_dir=bm25_dir)
 
-    print()
-    print("[INFO] 所有索引构建完成！")
+    logger.info("所有索引构建完成！")
 
 
 if __name__ == "__main__":

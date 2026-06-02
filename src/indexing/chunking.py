@@ -6,6 +6,7 @@
 """
 
 import re
+import logging
 import numpy as np
 from typing import List, Dict, Optional
 
@@ -89,8 +90,8 @@ def semantic_chunking(pages: List[Dict],
             effective_model = _resolve_model_path("Xorbits/bge-m3")
             device = "cuda" if torch.cuda.is_available() else "cpu"
             model = SentenceTransformer(effective_model, device=device)
-        except Exception:
-            pass  # Fall back to jieba similarity
+        except Exception as e:
+            logging.warning(f"Failed to load SentenceTransformer model, falling back to jieba: {e}")
 
     chunks = []
     chunk_idx = 0
@@ -218,8 +219,8 @@ def semantic_chunking(pages: List[Dict],
         page_summary = chart_desc.get("page_summary", "")
 
         if chart_desc.get("has_charts"):
+            from src.indexing.indexer import _format_chart_content
             for ci, chart in enumerate(chart_desc.get("charts", [])):
-                from src.indexing.indexer import _format_chart_content
                 content = _format_chart_content(chart, page_summary)
                 if content.strip():
                     chunks.append({
@@ -232,8 +233,8 @@ def semantic_chunking(pages: List[Dict],
                     chunk_idx += 1
 
         if chart_desc.get("has_tables"):
+            from src.indexing.indexer import _format_chart_table_content
             for ti, table in enumerate(chart_desc.get("tables", [])):
-                from src.indexing.indexer import _format_chart_table_content
                 content = _format_chart_table_content(table, page_summary)
                 if content.strip():
                     chunks.append({
