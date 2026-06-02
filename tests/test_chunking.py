@@ -7,6 +7,7 @@ from src.indexing.chunking import (
     compute_similarity,
     semantic_chunking,
 )
+from src.indexing.indexer import create_chunks
 
 
 class TestSplitSentences:
@@ -109,3 +110,99 @@ class TestSemanticChunking:
         # Should have at least one text chunk and one table chunk
         types = [c["type"] for c in chunks]
         assert "table" in types
+
+
+class TestChartChunks:
+    """Tests for chart/chart_table chunk creation from chart_descriptions."""
+
+    def test_chart_chunks_created(self):
+        """Chart chunks are created from chart_descriptions.charts."""
+        pages = [{
+            "filename": "test_report",
+            "page": 1,
+            "text": "这是一段测试文本。",
+            "tables": [],
+            "chart_descriptions": {
+                "page_summary": "本页展示了营收趋势图。",
+                "has_charts": True,
+                "has_tables": False,
+                "charts": [{
+                    "chart_id": "图1",
+                    "type": "line_chart",
+                    "title": "营收趋势",
+                    "x_axis": "年份 (2019-2023)",
+                    "y_axis": "营收 (亿元)",
+                    "legend": ["营收"],
+                    "key_data": "营收从2019年的50亿元增长至2023年的120亿元。",
+                    "source": "资料来源：WIND",
+                }],
+                "tables": [],
+            }
+        }]
+        chunks = create_chunks(pages)
+        chart_chunks = [c for c in chunks if c["type"] == "chart"]
+        assert len(chart_chunks) == 1
+        assert chart_chunks[0]["chunk_id"] == "test_report_p1_chart0"
+        assert "图1" in chart_chunks[0]["content"]
+        assert "营收趋势" in chart_chunks[0]["content"]
+        assert "页面摘要" in chart_chunks[0]["content"]
+
+    def test_chart_table_chunks_created(self):
+        """chart_table chunks are created from chart_descriptions.tables."""
+        pages = [{
+            "filename": "test_report",
+            "page": 5,
+            "text": "对比分析。",
+            "tables": [],
+            "chart_descriptions": {
+                "page_summary": "本页有财务对比表格。",
+                "has_charts": False,
+                "has_tables": True,
+                "charts": [],
+                "tables": [{
+                    "table_id": "表2",
+                    "title": "财务数据对比",
+                    "headers": ["年份", "营收", "利润"],
+                    "rows": [["2022", "100亿", "20亿"]],
+                    "key_info": "2022年营收100亿元，利润20亿元。",
+                    "source": None,
+                }],
+            }
+        }]
+        chunks = create_chunks(pages)
+        ct_chunks = [c for c in chunks if c["type"] == "chart_table"]
+        assert len(ct_chunks) == 1
+        assert ct_chunks[0]["chunk_id"] == "test_report_p5_charttable0"
+        assert "表2" in ct_chunks[0]["content"]
+        assert "关键信息" in ct_chunks[0]["content"]
+
+    def test_no_chart_descriptions_graceful(self):
+        """Pages without chart_descriptions still work."""
+        pages = [{
+            "filename": "test_report",
+            "page": 1,
+            "text": "这是一段足够长的纯文字页面内容，用于测试没有图表描述的情况。",
+            "tables": [],
+        }]
+        chunks = create_chunks(pages)
+        assert len(chunks) == 1
+        assert chunks[0]["type"] == "text"
+
+    def test_empty_chart_descriptions(self):
+        """Empty chart_descriptions stub produces no chart/chart_table chunks."""
+        pages = [{
+            "filename": "test_report",
+            "page": 1,
+            "text": "这是一段足够长的纯文字页面内容，用于测试空图表描述的情况。",
+            "tables": [],
+            "chart_descriptions": {
+                "page_summary": "",
+                "has_charts": False,
+                "has_tables": False,
+                "charts": [],
+                "tables": [],
+            }
+        }]
+        chunks = create_chunks(pages)
+        assert all(c["type"] != "chart" for c in chunks)
+        assert all(c["type"] != "chart_table" for c in chunks)

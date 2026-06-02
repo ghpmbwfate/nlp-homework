@@ -27,3 +27,10 @@ Thumbs.db
 
 # Environment variables
 .env
+
+# HuggingFace cache
+.cache/
+
+# Backup files
+*.bak
+*.pre_merge

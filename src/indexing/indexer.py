@@ -68,8 +68,87 @@ def create_chunks(pages: list[dict]) -> list[dict]:
                 })
                 chunk_id += 1
 
+        # 图表描述chunks (from VLM-extracted chart_descriptions)
+        chart_desc = page.get("chart_descriptions") or {}
+        page_summary = chart_desc.get("page_summary", "")
+
+        # 每个图表一个chunk
+        if chart_desc.get("has_charts"):
+            for ci, chart in enumerate(chart_desc.get("charts", [])):
+                content = _format_chart_content(chart, page_summary)
+                if content.strip():
+                    chunks.append({
+                        "chunk_id": f"{filename}_p{page_num}_chart{ci}",
+                        "filename": filename,
+                        "page": page_num,
+                        "type": "chart",
+                        "content": content.strip(),
+                    })
+                    chunk_id += 1
+
+        # 每个VLM表格一个chunk
+        if chart_desc.get("has_tables"):
+            for ti, table in enumerate(chart_desc.get("tables", [])):
+                content = _format_chart_table_content(table, page_summary)
+                if content.strip():
+                    chunks.append({
+                        "chunk_id": f"{filename}_p{page_num}_charttable{ti}",
+                        "filename": filename,
+                        "page": page_num,
+                        "type": "chart_table",
+                        "content": content.strip(),
+                    })
+                    chunk_id += 1
+
     print(f"[INFO] 共创建 {len(chunks)} 个chunk")
     return chunks
+
+
+def _format_chart_content(chart: dict, page_summary: str) -> str:
+    """将单个图表描述格式化为检索友好的文本chunk"""
+    parts = []
+    if page_summary:
+        parts.append(f"[页面摘要] {page_summary}")
+    chart_label = chart.get("chart_id") or "图表"
+    parts.append(f"[图表] {chart_label} {chart.get('title', '')}")
+    if chart.get("type"):
+        parts.append(f"类型: {chart['type']}")
+    if chart.get("x_axis"):
+        parts.append(f"X轴: {chart['x_axis']}")
+    if chart.get("y_axis"):
+        parts.append(f"Y轴: {chart['y_axis']}")
+    if chart.get("legend"):
+        parts.append(f"图例: {', '.join(chart['legend'])}")
+    if chart.get("key_data"):
+        parts.append(f"关键数据: {chart['key_data']}")
+    source = chart.get("source")
+    parts.append(f"来源: {source or '无'}")
+    return "\n".join(parts)
+
+
+def _format_chart_table_content(table: dict, page_summary: str) -> str:
+    """将单个VLM提取的表格格式化为检索友好的文本chunk"""
+    parts = []
+    if page_summary:
+        parts.append(f"[页面摘要] {page_summary}")
+    table_label = table.get("table_id") or "表格"
+    title = table.get("title") or "未命名表格"
+    parts.append(f"[图表表格] {table_label} {title}")
+    if table.get("headers"):
+        parts.append(f"列标题: {', '.join(table['headers'])}")
+    if table.get("key_info"):
+        parts.append(f"关键信息: {table['key_info']}")
+    rows = table.get("rows", [])
+    headers = table.get("headers", [])
+    if rows:
+        parts.append("数据:")
+        if headers:
+            parts.append("| " + " | ".join(headers) + " |")
+        for row in rows:
+            parts.append("| " + " | ".join(str(c) for c in row) + " |")
+    source = table.get("source")
+    parts.append(f"来源: {source or '无'}")
+    return "\n".join(parts)
 
 
 def build_dense_index(chunks: list[dict],

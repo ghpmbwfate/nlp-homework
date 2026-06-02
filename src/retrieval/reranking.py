@@ -114,19 +114,21 @@ def filter_by_question_type(candidates: List[Dict],
         return candidates
 
     if question_type == "fact_extraction":
-        # 表格 chunk 优先（数值更精确）
-        tables = [c for c in candidates if c.get("type") == "table"]
-        texts = [c for c in candidates if c.get("type") != "table"]
+        # 表格/VLM表格 chunk 优先（数值更精确）
+        tables = [c for c in candidates if c.get("type") in ("table", "chart_table")]
+        texts = [c for c in candidates if c.get("type") not in ("table", "chart_table")]
         return tables + texts
 
     elif question_type == "chart_understanding":
-        # 包含图表引用的 chunk 优先
-        def has_chart_ref(c):
+        # chart/chart_table 类型优先，其次含图表引用的 chunk
+        def has_chart_priority(c):
+            if c.get("type") in ("chart", "chart_table"):
+                return True
             content = c.get("content", "")
             return bool(re.search(r'图\d+|表\d+|如图|见图|图表|上图|下图', content))
 
-        chart_chunks = [c for c in candidates if has_chart_ref(c)]
-        other_chunks = [c for c in candidates if not has_chart_ref(c)]
+        chart_chunks = [c for c in candidates if has_chart_priority(c)]
+        other_chunks = [c for c in candidates if not has_chart_priority(c)]
         return chart_chunks + other_chunks
 
     else:

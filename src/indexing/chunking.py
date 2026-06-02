@@ -208,4 +208,36 @@ def semantic_chunking(pages: List[Dict],
                 })
                 chunk_idx += 1
 
+        # Step 7: Add chart/chart_table chunks from chart_descriptions
+        chart_desc = page.get("chart_descriptions") or {}
+        page_summary = chart_desc.get("page_summary", "")
+
+        if chart_desc.get("has_charts"):
+            for ci, chart in enumerate(chart_desc.get("charts", [])):
+                from src.indexing.indexer import _format_chart_content
+                content = _format_chart_content(chart, page_summary)
+                if content.strip():
+                    chunks.append({
+                        "chunk_id": f"{filename}_p{page_num}_chart{ci}",
+                        "filename": filename,
+                        "page": page_num,
+                        "type": "chart",
+                        "content": content.strip(),
+                    })
+                    chunk_idx += 1
+
+        if chart_desc.get("has_tables"):
+            for ti, table in enumerate(chart_desc.get("tables", [])):
+                from src.indexing.indexer import _format_chart_table_content
+                content = _format_chart_table_content(table, page_summary)
+                if content.strip():
+                    chunks.append({
+                        "chunk_id": f"{filename}_p{page_num}_charttable{ti}",
+                        "filename": filename,
+                        "page": page_num,
+                        "type": "chart_table",
+                        "content": content.strip(),
+                    })
+                    chunk_idx += 1
+
     return chunks

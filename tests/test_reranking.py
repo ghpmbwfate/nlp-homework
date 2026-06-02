@@ -133,3 +133,38 @@ class TestMultiStageRerank:
             assert "content" in r
             assert "score" in r
             assert "type" in r
+
+
+class TestChartAwareFiltering:
+    """Tests for chart/chart_table aware filter_by_question_type."""
+
+    def test_chart_understanding_prioritizes_chart_type(self):
+        """chart and chart_table type chunks should be prioritized."""
+        candidates = [
+            {"chunk_id": "a_p1_text", "type": "text", "content": "普通文本内容"},
+            {"chunk_id": "a_p1_chart0", "type": "chart", "content": "[图表] 图1 营收趋势"},
+            {"chunk_id": "a_p1_charttable0", "type": "chart_table", "content": "[图表表格] 表1 数据"},
+        ]
+        result = filter_by_question_type(candidates, "chart_understanding")
+        assert result[0]["type"] in ("chart", "chart_table")
+
+    def test_fact_extraction_prioritizes_chart_table(self):
+        """chart_table chunks should be promoted alongside table for fact questions."""
+        candidates = [
+            {"chunk_id": "a_p1_text", "type": "text", "content": "普通文本"},
+            {"chunk_id": "a_p1_table0", "type": "table", "content": "表格数据"},
+            {"chunk_id": "a_p1_charttable0", "type": "chart_table", "content": "VLM表格"},
+        ]
+        result = filter_by_question_type(candidates, "fact_extraction")
+        types_in_order = [c["type"] for c in result]
+        assert "chart_table" in types_in_order[:2]
+        assert "table" in types_in_order[:2]
+
+    def test_chart_understanding_regex_fallback(self):
+        """Text chunks with chart references still get priority."""
+        candidates = [
+            {"chunk_id": "a_p1_text", "type": "text", "content": "如图1所示的趋势"},
+            {"chunk_id": "a_p2_text", "type": "text", "content": "普通内容无图表"},
+        ]
+        result = filter_by_question_type(candidates, "chart_understanding")
+        assert "图1" in result[0]["content"]
