@@ -220,70 +220,103 @@ def evaluate(pred_data: List[dict], gold_data: List[dict]) -> Dict:
     """
     评估主函数
 
-    匹配策略：
-    - 优先按 question 字段匹配
-    - 如果 question 不匹配或不存在，则按顺序配对
+    以 ground_truth 为基准遍历，在 pred 中查找对应预测答案。
+    匹配策略：精确匹配 → 模糊匹配（ratio >= 0.6）
+
+    评测指标（标准 QA 评测）：
+    - ROUGE-1/2/L recall（召回率）
+    - BLEU-4
+    - Citation Accuracy（文件名+页码定位准确率）
     """
-    # 建立 gold 的 question -> answer 映射
-    gold_map = {}
-    for item in gold_data:
+    from difflib import SequenceMatcher
+
+    # 建立 pred 的 question -> answer 映射
+    pred_map = {}
+    for item in pred_data:
         q = item.get("question", "").strip()
         if q:
-            gold_map[q] = item
+            pred_map[q] = item
 
     results = []
-    total = {"exact_match": 0, "char_f1": 0.0, "word_f1": 0.0,
-             "rouge_1_f1": 0.0, "rouge_2_f1": 0.0, "rouge_l_f1": 0.0,
-             "bleu": 0.0, "number_f1": 0.0}
+    total = {"exact_match": 0, "rouge_1_recall": 0.0, "rouge_2_recall": 0.0,
+             "rouge_l_recall": 0.0, "bleu": 0.0,
+             "filename_acc": 0, "page_acc": 0, "citation_acc": 0}
 
-    for pred_item in pred_data:
-        pred_q = pred_item.get("question", "").strip()
-        pred_ans = pred_item.get("answer", "")
+    for gold_item in gold_data:
+        gold_q = gold_item.get("question", "").strip()
+        gold_ans = gold_item.get("answer", "")
 
-        # 必须按 question 精确匹配
-        if not pred_q or pred_q not in gold_map:
-            logger.warning(f"未匹配到问题，已跳过: {pred_q[:60]}...")
+        # 1. 精确匹配
+        pred_item = pred_map.get(gold_q)
+        matched_q = gold_q if pred_item else None
+
+        # 2. 模糊匹配
+        if pred_item is None:
+            best_q = None
+            best_ratio = 0.0
+            for pq in pred_map:
+                ratio = SequenceMatcher(None, gold_q, pq).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_q = pq
+            if best_ratio >= 0.6 and best_q is not None:
+                pred_item = pred_map[best_q]
+                matched_q = best_q
+
+        if pred_item is None:
+            logger.warning(f"未匹配到预测，已跳过: {gold_q[:60]}...")
             continue
 
-        gold_item = gold_map[pred_q]
-
-        gold_ans = gold_item.get("answer", "")
+        pred_ans = pred_item.get("answer", "")
 
         # 标准化
         pred_norm = normalize_text(pred_ans)
         gold_norm = normalize_text(gold_ans)
 
-        # 计算指标
+        # 计算指标 — ROUGE 使用 recall
         em = 1.0 if pred_norm == gold_norm else 0.0
-        _, _, c_f1 = char_f1(pred_norm, gold_norm)
-        _, _, w_f1 = word_f1(pred_norm, gold_norm)
-        _, _, r1_f1 = rouge_1(pred_norm, gold_norm)
-        _, _, r2_f1 = rouge_2(pred_norm, gold_norm)
-        _, _, rl_f1 = rouge_l(pred_norm, gold_norm)
+        _, r1_recall, _ = rouge_1(pred_norm, gold_norm)
+        _, r2_recall, _ = rouge_2(pred_norm, gold_norm)
+        _, rl_recall, _ = rouge_l(pred_norm, gold_norm)
         b_score = bleu(pred_norm, gold_norm)
-        n_f1 = number_accuracy(pred_ans, gold_ans)
 
         total["exact_match"] += em
-        total["char_f1"] += c_f1
-        total["word_f1"] += w_f1
-        total["rouge_1_f1"] += r1_f1
-        total["rouge_2_f1"] += r2_f1
-        total["rouge_l_f1"] += rl_f1
+        total["rouge_1_recall"] += r1_recall
+        total["rouge_2_recall"] += r2_recall
+        total["rouge_l_recall"] += rl_recall
         total["bleu"] += b_score
-        total["number_f1"] += n_f1
+
+        # 引用定位准确率
+        pred_filename = pred_item.get("filename", "")
+        gold_filename = gold_item.get("filename", "")
+        pred_page = pred_item.get("page")
+        gold_page = gold_item.get("page")
+
+        fn_match = 1 if pred_filename and pred_filename == gold_filename else 0
+        pg_match = 1 if pred_page is not None and pred_page == gold_page else 0
+        cite_match = 1 if fn_match and pg_match else 0
+
+        total["filename_acc"] += fn_match
+        total["page_acc"] += pg_match
+        total["citation_acc"] += cite_match
 
         results.append({
-            "question": pred_q,
+            "question": matched_q,
+            "gold_question": gold_q,
             "predicted": pred_ans,
             "gold": gold_ans,
+            "pred_filename": pred_filename,
+            "gold_filename": gold_filename,
+            "pred_page": pred_page,
+            "gold_page": gold_page,
             "exact_match": em,
-            "char_f1": c_f1,
-            "word_f1": w_f1,
-            "rouge_1_f1": r1_f1,
-            "rouge_2_f1": r2_f1,
-            "rouge_l_f1": rl_f1,
+            "rouge_1_recall": r1_recall,
+            "rouge_2_recall": r2_recall,
+            "rouge_l_recall": rl_recall,
             "bleu": b_score,
-            "number_f1": n_f1
+            "filename_match": fn_match,
+            "page_match": pg_match,
+            "citation_match": cite_match,
         })
 
     n = len(results)
@@ -293,15 +326,14 @@ def evaluate(pred_data: List[dict], gold_data: List[dict]) -> Dict:
 
     metrics = {
         "count": n,
-        "accuracy": total["exact_match"] / n,
         "exact_match": total["exact_match"] / n,
-        "char_f1": total["char_f1"] / n,
-        "word_f1": total["word_f1"] / n,
-        "rouge_1_f1": total["rouge_1_f1"] / n,
-        "rouge_2_f1": total["rouge_2_f1"] / n,
-        "rouge_l_f1": total["rouge_l_f1"] / n,
+        "rouge_1_recall": total["rouge_1_recall"] / n,
+        "rouge_2_recall": total["rouge_2_recall"] / n,
+        "rouge_l_recall": total["rouge_l_recall"] / n,
         "bleu": total["bleu"] / n,
-        "number_f1": total["number_f1"] / n,
+        "filename_accuracy": total["filename_acc"] / n,
+        "page_accuracy": total["page_acc"] / n,
+        "citation_accuracy": total["citation_acc"] / n,
         "details": results
     }
 
@@ -315,33 +347,32 @@ def print_report(metrics: Dict, output_path: str = None):
     logger.info("=" * 60)
     logger.info(f"样本数量: {metrics['count']}")
     logger.info("-" * 60)
-    logger.info(f"准确率 (Accuracy):            {metrics['accuracy']:.4f}")
     logger.info(f"精确匹配率 (Exact Match):     {metrics['exact_match']:.4f}")
-    logger.info(f"字符级 F1 (Char F1):          {metrics['char_f1']:.4f}")
-    logger.info(f"词级 F1 (Word F1):            {metrics['word_f1']:.4f}")
-    logger.info(f"ROUGE-1 F1:                   {metrics['rouge_1_f1']:.4f}")
-    logger.info(f"ROUGE-2 F1:                   {metrics['rouge_2_f1']:.4f}")
-    logger.info(f"ROUGE-L F1:                   {metrics['rouge_l_f1']:.4f}")
+    logger.info(f"ROUGE-1 Recall:               {metrics['rouge_1_recall']:.4f}")
+    logger.info(f"ROUGE-2 Recall:               {metrics['rouge_2_recall']:.4f}")
+    logger.info(f"ROUGE-L Recall:               {metrics['rouge_l_recall']:.4f}")
     logger.info(f"BLEU-4:                       {metrics['bleu']:.4f}")
-    logger.info(f"数字提取 F1 (Number F1):      {metrics['number_f1']:.4f}")
+    logger.info(f"Filename Accuracy:            {metrics['filename_accuracy']:.4f}")
+    logger.info(f"Page Accuracy:                {metrics['page_accuracy']:.4f}")
+    logger.info(f"Citation Accuracy:            {metrics['citation_accuracy']:.4f}")
     logger.info("=" * 60)
 
     # 找出表现最好和最差的样本
     details = metrics["details"]
-    best = max(details, key=lambda x: x["rouge_l_f1"])
-    worst = min(details, key=lambda x: x["rouge_l_f1"])
+    best = max(details, key=lambda x: x["rouge_l_recall"])
+    worst = min(details, key=lambda x: x["rouge_l_recall"])
 
-    logger.info("\n【ROUGE-L 最高样本】")
+    logger.info("\n【ROUGE-L Recall 最高样本】")
     logger.info(f"问题: {best['question'][:80]}...")
     logger.info(f"预测: {best['predicted'][:100]}...")
     logger.info(f"参考: {best['gold'][:100]}...")
-    logger.info(f"分数: EM={best['exact_match']:.2f}, ROUGE-L={best['rouge_l_f1']:.4f}")
+    logger.info(f"分数: EM={best['exact_match']:.2f}, ROUGE-L Recall={best['rouge_l_recall']:.4f}")
 
-    logger.info("\n【ROUGE-L 最低样本】")
+    logger.info("\n【ROUGE-L Recall 最低样本】")
     logger.info(f"问题: {worst['question'][:80]}...")
     logger.info(f"预测: {worst['predicted'][:100]}...")
     logger.info(f"参考: {worst['gold'][:100]}...")
-    logger.info(f"分数: EM={worst['exact_match']:.2f}, ROUGE-L={worst['rouge_l_f1']:.4f}")
+    logger.info(f"分数: EM={worst['exact_match']:.2f}, ROUGE-L Recall={worst['rouge_l_recall']:.4f}")
 
     if output_path:
         with open(output_path, "w", encoding="utf-8") as f:
