@@ -56,6 +56,19 @@ def _build_retriever(retriever_type: str, **kwargs):
             page_content_path=kwargs.get("page_content", "page_content.json"),
             image_dir=kwargs.get("image_dir"),
         )
+    elif retriever_type == "bm25":
+        from src.baseline.bm25 import BM25Retriever
+        return BM25Retriever(
+            bm25_dir=kwargs.get("bm25_dir"),
+            image_dir=kwargs.get("image_dir"),
+        )
+    elif retriever_type == "dense":
+        from src.baseline.dense import DenseRetriever
+        return DenseRetriever(
+            chroma_dir=kwargs.get("chroma_dir"),
+            dense_model=kwargs.get("dense_model", DENSE_MODEL),
+            image_dir=kwargs.get("image_dir"),
+        )
     else:
         raise ValueError(f"Unknown retriever type: {retriever_type}")
 
@@ -171,6 +184,9 @@ def run_pipeline(test_path: str = None,
             qtype = gen_result["question_type"]
             citations = gen_result["citations"]
 
+            if not answer.strip():
+                logger.warning(f"[{i+1}] 答案为空: question={question[:50]}")
+
             # Self-RAG: 自洽性检查
             self_check = run_self_check(answer, context_text)
             verdict = self_check["verdict"]
@@ -213,7 +229,7 @@ if __name__ == "__main__":
     parser.add_argument("--test", type=str, default=None, help="测试集路径（默认: test_ground_truth.json）")
     parser.add_argument("--output", type=str, default=None, help="输出路径")
     parser.add_argument("--retriever", type=str, default="vrag",
-                        choices=["vrag", "tfidf"], help="检索后端 (default: vrag)")
+                        choices=["vrag", "tfidf", "bm25", "dense"], help="检索后端 (default: vrag)")
     parser.add_argument("--page_content", type=str, default="page_content.json",
                         help="page_content.json 路径 (TF-IDF baseline 使用)")
     parser.add_argument("--chroma_dir", type=str, default=None)

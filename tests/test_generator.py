@@ -218,7 +218,7 @@ class TestLLMGeneratorCallLLM:
             gen.client.chat.completions, "create",
             lambda **kw: _Resp()
         )
-        assert gen._call_llm("p", max_tokens=10) == ""
+        assert gen._call_llm("p", max_tokens=10) == "[模型返回空答案，finish_reason=None]"
 
     def test_call_llm_returns_stripped_content(self, monkeypatch):
         gen = LLMGenerator(api_key="fake")

@@ -108,8 +108,32 @@ class LLMGenerator:
                 temperature=self.temperature,
                 max_tokens=max_tokens,
             )
-            content = response.choices[0].message.content
-            return content.strip() if content else ""
+            choice = response.choices[0]
+            content = choice.message.content
+            finish_reason = getattr(choice, "finish_reason", None)
+
+            # 兼容 reasoning 模型：尝试读取 reasoning_content 字段
+            reasoning_content = getattr(choice.message, "reasoning_content", None)
+
+            if content and content.strip():
+                if finish_reason == "length":
+                    logger.warning(
+                        f"答案被截断 (finish_reason=length, max_tokens={max_tokens})"
+                    )
+                return content.strip()
+
+            # content 为空时记录诊断信息
+            r_len = len(reasoning_content) if reasoning_content else 0
+            logger.warning(
+                f"LLM 返回空 content: finish_reason={finish_reason}, "
+                f"reasoning_content 长度={r_len}"
+            )
+
+            # Fallback: 用 reasoning_content（截取最后 1500 字作为答案）
+            if reasoning_content and reasoning_content.strip():
+                return reasoning_content.strip()[-1500:]
+
+            return f"[模型返回空答案，finish_reason={finish_reason}]"
         except (ConnectionError, TimeoutError) as e:
             raise RuntimeError(f"LLM API network error: {e}") from e
         except Exception as e:
