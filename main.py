@@ -1,5 +1,8 @@
 """
-主流程：读取test.json → 检索 → LLM生成 → 输出submit.json
+主流程：读取ground_truth → 检索 → LLM生成 → 输出submit.json
+
+默认从 test_ground_truth.json 提取问题（仅 question 字段用于检索/生成），
+输出格式与 ground_truth 一致：{filename, page, question, answer}
 
 支持 --retriever 切换检索后端:
     python main.py --retriever vrag   # VRAG (dense + BM25 + rerank)
@@ -12,11 +15,11 @@ import argparse
 from pathlib import Path
 
 from src.generation import LLMGenerator
-from src.generation.citation import clean_answer_no_citations, has_citations
 from src.generation.question_classifier import classify_question
 from src.generation.self_rag import run_self_check
 from src.config import (
     DEFAULT_TEST_PATH,
+    DEFAULT_GROUND_TRUTH_PATH,
     DEFAULT_OUTPUT_PATH,
     INDEX_CHROMA_DIR,
     INDEX_BM25_DIR,
@@ -87,8 +90,8 @@ def run_pipeline(test_path: str = None,
                  max_new_tokens: int = None):
     """运行完整pipeline"""
 
-    # 使用默认值
-    test_path = test_path or str(DEFAULT_TEST_PATH)
+    # 默认从 ground_truth 提取问题
+    test_path = test_path or str(DEFAULT_GROUND_TRUTH_PATH)
     output_path = output_path or str(DEFAULT_OUTPUT_PATH)
     chroma_dir = chroma_dir or str(INDEX_CHROMA_DIR)
     bm25_dir = bm25_dir or str(INDEX_BM25_DIR)
@@ -175,36 +178,18 @@ def run_pipeline(test_path: str = None,
             logger.info(f"自洽性: {verdict} (数字支持率={self_check['num_support_ratio']:.2f})")
 
             results.append({
-                "question": question,
                 "filename": top_filename,
                 "page": top_page,
+                "question": question,
                 "answer": answer,
-                "question_type": qtype,
-                "citations": citations,
-                "has_citations": has_citations(answer),
-                "self_check": {
-                    "verdict": verdict,
-                    "num_support_ratio": self_check["num_support_ratio"],
-                    "keyword_overlap_ratio": self_check["keyword_overlap_ratio"],
-                    "feedback": self_check["feedback"],
-                },
             })
         except Exception as e:
             logger.error(f"处理失败: {e}")
             results.append({
-                "question": question,
                 "filename": "",
                 "page": -1,
+                "question": question,
                 "answer": f"处理失败: {e}",
-                "question_type": "error",
-                "citations": [],
-                "has_citations": False,
-                "self_check": {
-                    "verdict": "error",
-                    "num_support_ratio": 0.0,
-                    "keyword_overlap_ratio": 0.0,
-                    "feedback": str(e),
-                },
             })
 
     # 5. 保存结果
@@ -225,7 +210,7 @@ def run_pipeline(test_path: str = None,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="财报RAG问答系统 - 主流程")
-    parser.add_argument("--test", type=str, default=None, help="测试集路径")
+    parser.add_argument("--test", type=str, default=None, help="测试集路径（默认: test_ground_truth.json）")
     parser.add_argument("--output", type=str, default=None, help="输出路径")
     parser.add_argument("--retriever", type=str, default="vrag",
                         choices=["vrag", "tfidf"], help="检索后端 (default: vrag)")
