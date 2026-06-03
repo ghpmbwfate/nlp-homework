@@ -1,0 +1,160 @@
+{
+  "TF-IDF": {
+    "file": "submit_tfidf_v3.json",
+    "total": 67,
+    "counts": {
+      "ok": 66,
+      "empty": 0,
+      "error_fallback": 0,
+      "likely_truncated": 1
+    },
+    "broken_indices": {
+      "empty": [],
+      "error_fallback": [],
+      "likely_truncated": [
+        38
+      ]
+    }
+  },
+  "BM25": {
+    "file": "submit_bm25.json",
+    "total": 67,
+    "counts": {
+      "ok": 50,
+      "empty": 17,
+      "error_fallback": 0,
+      "likely_truncated": 0
+    },
+    "broken_indices": {
+      "empty": [
+        0,
+        4,
+        13,
+        16,
+        19,
+        25,
+        37,
+        46,
+        47,
+        48,
+        49,
+        55,
+        56,
+        58,
+        59,
+        65,
+        66
+      ],
+      "error_fallback": [],
+      "likely_truncated": []
+    }
+  },
+  "Dense": {
+    "file": "submit_dense.json",
+    "total": 67,
+    "counts": {
+      "ok": 67,
+      "empty": 0,
+      "error_fallback": 0,
+      "likely_truncated": 0
+    },
+    "broken_indices": {
+      "empty": [],
+      "error_fallback": [],
+      "likely_truncated": []
+    }
+  },
+  "A: Hybrid RRF": {
+    "file": "submit_hybrid_rrf.json",
+    "total": 67,
+    "counts": {
+      "ok": 67,
+      "empty": 0,
+      "error_fallback": 0,
+      "likely_truncated": 0
+    },
+    "broken_indices": {
+      "empty": [],
+      "error_fallback": [],
+      "likely_truncated": []
+    }
+  },
+  "B: Dense+CE": {
+    "file": "submit_dense_rerank.json",
+    "total": 67,
+    "counts": {
+      "ok": 67,
+      "empty": 0,
+      "error_fallback": 0,
+      "likely_truncated": 0
+    },
+    "broken_indices": {
+      "empty": [],
+      "error_fallback": [],
+      "likely_truncated": []
+    }
+  },
+  "C: BM25+CE": {
+    "file": "submit_bm25_rerank.json",
+    "total": 67,
+    "counts": {
+      "ok": 67,
+      "empty": 0,
+      "error_fallback": 0,
+      "likely_truncated": 0
+    },
+    "broken_indices": {
+      "empty": [],
+      "error_fallback": [],
+      "likely_truncated": []
+    }
+  },
+  "D: Hybrid+CE": {
+    "file": "submit_hybrid_ce.json",
+    "total": 67,
+    "counts": {
+      "ok": 67,
+      "empty": 0,
+      "error_fallback": 0,
+      "likely_truncated": 0
+    },
+    "broken_indices": {
+      "empty": [],
+      "error_fallback": [],
+      "likely_truncated": []
+    }
+  },
+  "D: bge-v2-m3": {
+    "file": "submit_hybrid_ce_bge_v2m3.json",
+    "total": 67,
+    "counts": {
+      "ok": 65,
+      "empty": 0,
+      "error_fallback": 0,
+      "likely_truncated": 2
+    },
+    "broken_indices": {
+      "empty": [],
+      "error_fallback": [],
+      "likely_truncated": [
+        37,
+        65
+      ]
+    }
+  },
+  "D: qwen3-0.6b": {
+    "file": "submit_hybrid_ce_qwen3_06b.json",
+    "total": 67,
+    "counts": {
+      "ok": 67,
+      "empty": 0,
+      "error_fallback": 0,
+      "likely_truncated": 0
+    },
+    "broken_indices": {
+      "empty": [],
+      "error_fallback": [],
+      "likely_truncated": []
+    }
+  }
+}

@@ -44,8 +44,25 @@ OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "")
 
 # 模型缓存（使用 ModelScope 下载和管理）
 MODEL_CACHE_DIR = str(PROJECT_ROOT / ".cache" / "modelscope")
+HF_CACHE_DIR = str(PROJECT_ROOT / ".cache" / "huggingface")
 DENSE_MODEL_MS_ID = "Xorbits/bge-m3"  # ModelScope 模型 ID
 RERANKER_MODEL_MS_ID = "Xorbits/bge-reranker-large"  # ModelScope 模型 ID
+
+# 重定向所有 HuggingFace / sentence-transformers / transformers 缓存到项目目录
+# 防止 fallback 下载落到 C 盘 (~/.cache/huggingface)
+os.environ.setdefault("HF_HOME", HF_CACHE_DIR)
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(Path(HF_CACHE_DIR) / "hub"))
+os.environ.setdefault("TRANSFORMERS_CACHE", str(Path(HF_CACHE_DIR) / "transformers"))
+os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", str(Path(HF_CACHE_DIR) / "sentence-transformers"))
+
+# Reranker registry: 别名 → (ModelScope ID, backend)
+# backend: "bge" (CrossEncoder) | "qwen" (CausalLM yes/no logits)
+RERANKER_REGISTRY = {
+    "bge-large":   ("Xorbits/bge-reranker-large", "bge"),
+    "bge-v2-m3":   ("BAAI/bge-reranker-v2-m3",   "bge"),
+    "qwen3-0.6b":  ("Qwen/Qwen3-Reranker-0.6B",   "qwen"),
+}
+DEFAULT_RERANKER_ALIAS = "bge-large"
 
 
 def _resolve_model_path(ms_model_id: str) -> str:
@@ -66,3 +83,6 @@ FINAL_TOP_K = 3
 
 # 生成参数
 MAX_NEW_TOKENS = 2048
+
+# Prompt 版本：v1 = 原始模板；v2 = 加入 length budget + 编号结构 + 1-shot 示例
+PROMPT_VERSION = "v1"

@@ -31,6 +31,7 @@ from src.config import (
     BM25_TOP_K,
     FINAL_TOP_K,
     MAX_NEW_TOKENS,
+    PROMPT_VERSION,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,22 @@ def _build_retriever(retriever_type: str, **kwargs):
             dense_top_k=kwargs.get("dense_top_k", DENSE_TOP_K),
             bm25_top_k=kwargs.get("bm25_top_k", BM25_TOP_K),
             final_top_k=kwargs.get("final_top_k", FINAL_TOP_K),
+            reranker_alias=kwargs.get("reranker_alias"),
+        )
+    elif retriever_type == "hybrid_ce":
+        # Hybrid + CE only (no multi-recall, no multi-stage rerank) — Baseline D
+        from src.retrieval import Retriever
+        return Retriever(
+            chroma_dir=kwargs.get("chroma_dir"),
+            bm25_dir=kwargs.get("bm25_dir"),
+            image_dir=kwargs.get("image_dir"),
+            dense_model=kwargs.get("dense_model", DENSE_MODEL),
+            dense_top_k=kwargs.get("dense_top_k", DENSE_TOP_K),
+            bm25_top_k=kwargs.get("bm25_top_k", BM25_TOP_K),
+            final_top_k=kwargs.get("final_top_k", FINAL_TOP_K),
+            enable_multi_recall=False,
+            enable_multi_stage_rerank=False,
+            reranker_alias=kwargs.get("reranker_alias"),
         )
     elif retriever_type == "tfidf":
         from src.baseline.tfidf import TFIDFRetriever
@@ -68,6 +85,39 @@ def _build_retriever(retriever_type: str, **kwargs):
             chroma_dir=kwargs.get("chroma_dir"),
             dense_model=kwargs.get("dense_model", DENSE_MODEL),
             image_dir=kwargs.get("image_dir"),
+        )
+    elif retriever_type == "hybrid_rrf":
+        # Baseline A: dense + BM25 RRF, no rerank
+        from src.baseline.hybrid_rrf import HybridRRFRetriever
+        return HybridRRFRetriever(
+            chroma_dir=kwargs.get("chroma_dir"),
+            bm25_dir=kwargs.get("bm25_dir"),
+            image_dir=kwargs.get("image_dir"),
+            dense_model=kwargs.get("dense_model", DENSE_MODEL),
+            dense_top_k=kwargs.get("dense_top_k", DENSE_TOP_K),
+            bm25_top_k=kwargs.get("bm25_top_k", BM25_TOP_K),
+            final_top_k=kwargs.get("final_top_k", FINAL_TOP_K),
+        )
+    elif retriever_type == "dense_rerank":
+        # Baseline B: dense + CE rerank
+        from src.baseline.dense_rerank import DenseRerankRetriever
+        return DenseRerankRetriever(
+            chroma_dir=kwargs.get("chroma_dir"),
+            image_dir=kwargs.get("image_dir"),
+            dense_model=kwargs.get("dense_model", DENSE_MODEL),
+            reranker_alias=kwargs.get("reranker_alias"),
+            dense_top_k=kwargs.get("dense_top_k", DENSE_TOP_K),
+            final_top_k=kwargs.get("final_top_k", FINAL_TOP_K),
+        )
+    elif retriever_type == "bm25_rerank":
+        # Baseline C: BM25 + CE rerank
+        from src.baseline.bm25_rerank import BM25RerankRetriever
+        return BM25RerankRetriever(
+            bm25_dir=kwargs.get("bm25_dir"),
+            image_dir=kwargs.get("image_dir"),
+            reranker_alias=kwargs.get("reranker_alias"),
+            bm25_top_k=kwargs.get("bm25_top_k", BM25_TOP_K),
+            final_top_k=kwargs.get("final_top_k", FINAL_TOP_K),
         )
     else:
         raise ValueError(f"Unknown retriever type: {retriever_type}")
@@ -96,11 +146,13 @@ def run_pipeline(test_path: str = None,
                  image_dir: str = None,
                  dense_model: str = None,
                  reranker_model: str = None,
+                 reranker_alias: str = None,
                  llm_model: str = None,
                  dense_top_k: int = None,
                  bm25_top_k: int = None,
                  final_top_k: int = None,
-                 max_new_tokens: int = None):
+                 max_new_tokens: int = None,
+                 prompt_version: str = None):
     """运行完整pipeline"""
 
     # 默认从 ground_truth 提取问题
@@ -116,6 +168,7 @@ def run_pipeline(test_path: str = None,
     bm25_top_k = bm25_top_k if bm25_top_k is not None else BM25_TOP_K
     final_top_k = final_top_k if final_top_k is not None else FINAL_TOP_K
     max_new_tokens = max_new_tokens if max_new_tokens is not None else MAX_NEW_TOKENS
+    prompt_version = prompt_version or PROMPT_VERSION
 
     # 1. 加载测试数据
     logger.info("=" * 50)
@@ -136,6 +189,7 @@ def run_pipeline(test_path: str = None,
         page_content=page_content,
         dense_model=dense_model,
         reranker_model=reranker_model,
+        reranker_alias=reranker_alias,
         dense_top_k=dense_top_k,
         bm25_top_k=bm25_top_k,
         final_top_k=final_top_k,
@@ -145,7 +199,7 @@ def run_pipeline(test_path: str = None,
     logger.info("=" * 50)
     logger.info("Step 3: 初始化LLM生成器")
     logger.info("=" * 50)
-    generator = LLMGenerator(model=llm_model)
+    generator = LLMGenerator(model=llm_model, prompt_version=prompt_version)
 
     # 4. 逐题检索+生成
     logger.info("=" * 50)
@@ -229,7 +283,9 @@ if __name__ == "__main__":
     parser.add_argument("--test", type=str, default=None, help="测试集路径（默认: test_ground_truth.json）")
     parser.add_argument("--output", type=str, default=None, help="输出路径")
     parser.add_argument("--retriever", type=str, default="vrag",
-                        choices=["vrag", "tfidf", "bm25", "dense"], help="检索后端 (default: vrag)")
+                        choices=["vrag", "tfidf", "bm25", "dense",
+                                 "hybrid_rrf", "dense_rerank", "bm25_rerank", "hybrid_ce"],
+                        help="检索后端 (default: vrag)")
     parser.add_argument("--page_content", type=str, default="page_content.json",
                         help="page_content.json 路径 (TF-IDF baseline 使用)")
     parser.add_argument("--chroma_dir", type=str, default=None)
@@ -237,11 +293,16 @@ if __name__ == "__main__":
     parser.add_argument("--image_dir", type=str, default=None)
     parser.add_argument("--dense_model", type=str, default=None)
     parser.add_argument("--reranker_model", type=str, default=None)
+    parser.add_argument("--reranker_alias", type=str, default=None,
+                        help="Reranker 别名: bge-large | bge-v2-m3 | qwen3-0.6b")
     parser.add_argument("--llm_model", type=str, default=None)
     parser.add_argument("--dense_top_k", type=int, default=None)
     parser.add_argument("--bm25_top_k", type=int, default=None)
     parser.add_argument("--final_top_k", type=int, default=None)
     parser.add_argument("--max_new_tokens", type=int, default=None)
+    parser.add_argument("--prompt_version", type=str, default=None,
+                        choices=["v1", "v2"],
+                        help="Prompt 版本 (default: 读取 config.PROMPT_VERSION = v1)")
 
     args = parser.parse_args()
 
@@ -255,9 +316,11 @@ if __name__ == "__main__":
         image_dir=args.image_dir,
         dense_model=args.dense_model,
         reranker_model=args.reranker_model,
+        reranker_alias=args.reranker_alias,
         llm_model=args.llm_model,
         dense_top_k=args.dense_top_k,
         bm25_top_k=args.bm25_top_k,
         final_top_k=args.final_top_k,
-        max_new_tokens=args.max_new_tokens
+        max_new_tokens=args.max_new_tokens,
+        prompt_version=args.prompt_version,
     )

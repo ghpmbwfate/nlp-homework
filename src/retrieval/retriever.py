@@ -12,12 +12,12 @@ import jieba
 import chromadb
 from chromadb.utils import embedding_functions
 from rank_bm25 import BM25Okapi
-from sentence_transformers import CrossEncoder
 
-from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, IMAGES_DIR, _resolve_model_path
+from src.config import INDEX_CHROMA_DIR, INDEX_BM25_DIR, IMAGES_DIR, _resolve_model_path, DEFAULT_RERANKER_ALIAS
 from .base import BaseRetriever
 from .multi_recover import title_search, keyword_search, summary_search
 from .reranking import multi_stage_rerank
+from .reranker_backends import load_reranker
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +189,8 @@ class Retriever(BaseRetriever):
                  final_top_k: int = 3,
                  multi_indexes: dict | None = None,
                  enable_multi_recall: bool = False,
-                 enable_multi_stage_rerank: bool = False):
+                 enable_multi_stage_rerank: bool = False,
+                 reranker_alias: str | None = None):
         super().__init__(image_dir=image_dir)
         logger.info("初始化检索器...")
         self.dense_top_k = dense_top_k
@@ -203,12 +204,10 @@ class Retriever(BaseRetriever):
         self.collection = load_dense_index(chroma_dir, dense_model)
         self.bm25, self.chunks = load_bm25_index(bm25_dir)
 
-        # 加载reranker
-        import torch
-        effective_reranker = _resolve_model_path("Xorbits/bge-reranker-large")
-        reranker_device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"加载reranker: {effective_reranker} (device={reranker_device})")
-        self.reranker = CrossEncoder(effective_reranker, device=reranker_device)
+        # 加载reranker (via registry)
+        alias = reranker_alias or DEFAULT_RERANKER_ALIAS
+        self.reranker = load_reranker(alias)
+        self.reranker_alias = alias
 
         if enable_multi_recall and multi_indexes:
             logger.info("多路召回已启用 (title, keyword, summary)")

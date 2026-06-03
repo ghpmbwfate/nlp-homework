@@ -9,7 +9,7 @@ from typing import Optional
 
 from openai import OpenAI
 
-from src.config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
+from src.config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, PROMPT_VERSION
 
 from .citation import add_citation_instruction, extract_citations
 from .prompts import load_prompt_template
@@ -27,6 +27,7 @@ class LLMGenerator:
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         temperature: float = 0.0,
+        prompt_version: Optional[str] = None,
     ) -> None:
         api_key = api_key or OPENAI_API_KEY or os.environ.get("OPENAI_API_KEY")
         if not api_key:
@@ -47,8 +48,12 @@ class LLMGenerator:
                 "Set OPENAI_MODEL in .env or pass model."
             )
         self.temperature = temperature
+        self.prompt_version = prompt_version or PROMPT_VERSION
         self.client = OpenAI(api_key=api_key, base_url=base_url)
-        logger.info(f"LLM 生成器就绪: model={self.model}, base_url={base_url}")
+        logger.info(
+            f"LLM 生成器就绪: model={self.model}, base_url={base_url}, "
+            f"prompt_version={self.prompt_version}"
+        )
 
     def generate(
         self,
@@ -81,7 +86,7 @@ class LLMGenerator:
         qtype_str = qtype.value
 
         # 加载模板 + 追加引用溯源指令
-        prompt_template = load_prompt_template(qtype_str)
+        prompt_template = load_prompt_template(qtype_str, version=self.prompt_version)
         prompt_with_citation = add_citation_instruction(prompt_template)
         prompt = prompt_with_citation.format(
             question=question, context=context_text
