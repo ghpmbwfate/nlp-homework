@@ -82,7 +82,7 @@ BM25_TOP_K = 10
 FINAL_TOP_K = 3
 
 # 生成参数
-MAX_NEW_TOKENS = 2048
+MAX_NEW_TOKENS = 4096
 
 # Prompt 版本：v1 = 原始模板；v2 = 加入 length budget + 编号结构 + 1-shot 示例
 PROMPT_VERSION = "v1"
